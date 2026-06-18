@@ -1,0 +1,18 @@
+# ─── Moriya Nails – Netlify configuration ───────────────────────────
+# Publishes the static site from the project root and runs the booking
+# backend as serverless functions under /api/*.
+
+[build]
+  publish = "."
+  functions = "netlify/functions"
+
+# Map the frontend's /api/* calls to the serverless functions
+[[redirects]]
+  from = "/api/busy-slots"
+  to = "/.netlify/functions/busy-slots"
+  status = 200
+
+[[redirects]]
+  from = "/api/book"
+  to = "/.netlify/functions/book"
+  status = 200

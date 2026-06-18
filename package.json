@@ -1,0 +1,12 @@
+{
+  "name": "moriya-nails",
+  "version": "1.0.0",
+  "description": "Moriya Nails website + Google Calendar booking (Netlify serverless functions)",
+  "private": true,
+  "dependencies": {
+    "googleapis": "^140.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
