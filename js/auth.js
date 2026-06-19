@@ -68,8 +68,8 @@ function renderAuthUI() {
 
   if (MoriyaAuth.isLoggedIn()) {
     const name = MoriyaAuth.firstName();
-    const adminLink = MoriyaAuth.isAdmin()
-      ? `<a href="admin.html" class="nav-admin-link">לוח ניהול</a>` : '';
+    // לוח הניהול (admin.html) ייבנה בשלב הבא — הקישור יתווסף אז
+    const adminLink = '';
     box.innerHTML = `
       ${adminLink}
       <span class="nav-greeting">שלום ${name} 👋</span>
