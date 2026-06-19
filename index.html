@@ -150,6 +150,16 @@
         </div>
 
         <div class="service-card">
+          <div class="service-emoji">💧</div>
+          <h3>הסרת לק ג'ל</h3>
+          <p>הסרה מקצועית ועדינה של לק ג'ל קיים מהציפורניים</p>
+          <div class="service-meta">
+            <span class="s-time">⏱ 20 דקות</span>
+            <span class="s-price">30 ₪</span>
+          </div>
+        </div>
+
+        <div class="service-card">
           <div class="service-emoji">🎨</div>
           <h3>קישוט</h3>
           <p>עיצובים ייחודיים לפי בחירתך – מינימליסטי ועד פאנטזיה</p>
@@ -222,7 +232,7 @@
           <div class="addon-list">
 
             <!-- Anatomic -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox">
+            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-anatomic" />
                 <div class="custom-check"></div>
@@ -238,7 +248,7 @@
             </div>
 
             <!-- Double base -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox">
+            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-double" />
                 <div class="custom-check"></div>
@@ -254,7 +264,7 @@
             </div>
 
             <!-- French / Ombre -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox">
+            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-french" />
                 <div class="custom-check"></div>
@@ -270,7 +280,7 @@
             </div>
 
             <!-- Decoration -->
-            <div class="addon-row decoration-row" data-time="10" data-type="checkbox">
+            <div class="addon-row decoration-row" data-time="10" data-type="checkbox" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-deco" />
                 <div class="custom-check"></div>
@@ -287,6 +297,22 @@
                 <span class="deco-note-icon">💡</span>
                 <p>המחיר המדויק של הקישוט (5–40 ₪) ייקבע בתור עצמו בהתאם לעיצוב שתבחרי</p>
               </div>
+            </div>
+
+            <!-- Gel removal (standalone quick fix) -->
+            <div class="addon-row" data-time="20" data-price="30" data-type="checkbox">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="addon-check" id="chk-gel-removal" />
+                <div class="custom-check"></div>
+                <div class="addon-detail">
+                  <span class="a-name">הסרת לק ג'ל</span>
+                  <span class="a-desc">הסרה מקצועית ועדינה של לק ג'ל קיים</span>
+                </div>
+                <div class="addon-nums">
+                  <span class="a-time">20 דק'</span>
+                  <span class="a-price">30 ₪</span>
+                </div>
+              </label>
             </div>
 
             <!-- Polygel (quantity) -->
@@ -388,6 +414,29 @@
                 <input type="tel" id="f-phone" placeholder="050-0000000" required />
               </div>
             </div>
+
+            <!-- Phone verification (WhatsApp one-time code) -->
+            <div class="verify-block" id="verify-block">
+              <div class="verify-verified" id="verify-verified" style="display:none;">
+                <span class="verify-check">✓</span> הטלפון שלך מאומת
+              </div>
+              <div class="verify-pending" id="verify-pending">
+                <p class="verify-hint">לשריון התור נשלח קוד אימות חד-פעמי לוואטסאפ שלך 💬</p>
+                <button type="button" class="btn-verify-send" id="btn-send-code">שלחי לי קוד אימות</button>
+
+                <div class="verify-code-row" id="code-block" style="display:none;">
+                  <label for="f-code">הקוד שקיבלת בוואטסאפ</label>
+                  <div class="verify-code-controls">
+                    <input type="text" inputmode="numeric" maxlength="6" id="f-code"
+                           placeholder="------" autocomplete="one-time-code" />
+                    <button type="button" class="btn-verify-check" id="btn-verify-code">אימות ✓</button>
+                  </div>
+                  <button type="button" class="btn-verify-resend" id="btn-resend-code">שליחה חוזרת של הקוד</button>
+                </div>
+                <p class="verify-msg" id="verify-msg"></p>
+              </div>
+            </div>
+
             <div class="form-group">
               <label for="f-notes">הערות (רשות)</label>
               <textarea id="f-notes" placeholder="יש משהו שחשוב לך שנדע?"></textarea>
@@ -400,7 +449,7 @@
 
             <div class="step-nav">
               <button type="button" class="btn-back" id="back-step2">→ חזרה</button>
-              <button type="submit" class="btn-confirm">אשרי הזמנה ✓</button>
+              <button type="submit" class="btn-confirm" id="btn-confirm-booking">אשרי הזמנה ✓</button>
             </div>
           </form>
         </div>
