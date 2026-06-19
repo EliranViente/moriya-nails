@@ -68,7 +68,7 @@ function renderAuthUI() {
 
   if (MoriyaAuth.isLoggedIn()) {
     const name = MoriyaAuth.firstName();
-    // לוח הניהול (admin.html) ייבנה בשלב הבא — הקישור יתווסף אז
+    // Admin dashboard (admin.html) is built in the next phase; link added then.
     const adminLink = '';
     box.innerHTML = `
       ${adminLink}
