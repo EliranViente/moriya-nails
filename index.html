@@ -524,6 +524,16 @@
     </div>
   </footer>
 
+  <!-- ──────────────── MY APPOINTMENTS MODAL ──────────────── -->
+  <div class="modal-overlay" id="appts-modal" style="display:none;">
+    <div class="modal-card">
+      <button class="modal-close" id="appts-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title">התורים שלי</h3>
+      <p class="modal-sub">ניתן לשנות או לבטל תור עד יום לפני מועדו</p>
+      <div class="appts-list" id="appts-list"></div>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="js/auth.js"></script>
   <script src="js/app.js"></script>

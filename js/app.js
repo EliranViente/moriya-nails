@@ -27,6 +27,10 @@ const state = {
   clientNotes: '',
 };
 
+// When set, the booking date/time step reschedules this existing appointment
+// instead of creating a new one.
+let editingAppointment = null;
+
 // ─── Navbar scroll effect ─────────────────────────────────────────────────────
 const navbar = document.getElementById('navbar');
 window.addEventListener('scroll', () => {
@@ -156,6 +160,9 @@ recalculate(); // initial
 
 // Step 1 → Step 2
 document.getElementById('go-step2').addEventListener('click', () => {
+  editingAppointment = null;                 // fresh booking, not a reschedule
+  const next = document.getElementById('go-step3');
+  if (next) next.textContent = 'המשיכי לפרטים ←';
   showStep(2);
   renderCalendar();
 });
@@ -273,7 +280,10 @@ async function loadTimeSlots(dateStr) {
         .eq('user_id', MoriyaAuth.user.id)
         .eq('date', dateStr)
         .neq('status', 'cancelled');
-      if (existing && existing.length > 0) {
+      const conflicts = (existing || []).filter(
+        a => !editingAppointment || a.id !== editingAppointment.id
+      );
+      if (conflicts.length > 0) {
         slotsGrid.innerHTML = '<div class="no-slots">כבר קבעת תור ליום זה 💅<br/>ניתן לקבוע תור אחד בלבד בכל יום</div>';
         return;
       }
@@ -365,6 +375,7 @@ function renderSlots(slots, container) {
 
 document.getElementById('back-step1')?.addEventListener('click', () => showStep(1));
 document.getElementById('go-step3')?.addEventListener('click', () => {
+  if (editingAppointment) { updateAppointment(); return; }   // reschedule flow
   showStep(3);
   renderOrderSummary();
   prefillUserDetails();
@@ -550,3 +561,128 @@ function showStep(num) {
   const bookingEl = document.getElementById('booking');
   if (bookingEl) bookingEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  MY APPOINTMENTS – view / reschedule / cancel (logged-in users)
+// ═══════════════════════════════════════════════════════════════════════════════
+
+function localTodayStr() {
+  const n = new Date(), p = x => String(x).padStart(2, '0');
+  return `${n.getFullYear()}-${p(n.getMonth() + 1)}-${p(n.getDate())}`;
+}
+
+async function openMyAppointments() {
+  if (!window.MoriyaAuth || !MoriyaAuth.isLoggedIn()) return;
+  const modal = document.getElementById('appts-modal');
+  const list  = document.getElementById('appts-list');
+  if (!modal || !list) return;
+
+  modal.style.display = 'flex';
+  list.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוען את התורים שלך…</span></div>';
+
+  const { data, error } = await MoriyaAuth.sb
+    .from('appointments')
+    .select('*')
+    .eq('user_id', MoriyaAuth.user.id)
+    .neq('status', 'cancelled')
+    .gte('date', localTodayStr())
+    .order('date', { ascending: true })
+    .order('start_time', { ascending: true });
+
+  if (error) { list.innerHTML = '<p class="appts-empty">שגיאה בטעינת התורים 😔</p>'; return; }
+  renderApptsList(data || []);
+}
+window.openMyAppointments = openMyAppointments;
+
+function renderApptsList(appts) {
+  const list = document.getElementById('appts-list');
+  if (!appts.length) {
+    list.innerHTML = '<p class="appts-empty">אין לך תורים קרובים 💅<br/>אפשר לקבוע תור חדש בכל עת</p>';
+    return;
+  }
+
+  list.innerHTML = appts.map(a => {
+    const [Y, M, D]  = a.date.split('-');
+    const dateLabel  = `${D}/${M}/${Y}`;
+    const timeLabel  = (a.start_time || '').slice(0, 5);
+    const start      = new Date(`${a.date}T${a.start_time}`);
+    const canEdit    = (start.getTime() - Date.now()) > 24 * 60 * 60 * 1000; // up to 1 day before
+    const svc        = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
+    const actions    = canEdit
+      ? `<button class="appt-btn edit"   data-id="${a.id}">שינוי</button>
+         <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`
+      : `<span class="appt-locked">לא ניתן לשנות (פחות מ-24 שעות)</span>`;
+    return `
+      <div class="appt-card">
+        <div class="appt-info">
+          <strong class="appt-when">📅 ${dateLabel} · ⏰ ${timeLabel}</strong>
+          <span class="appt-svc">${svc}</span>
+          <span class="appt-meta">${a.total_price} ₪ · ${a.duration_min} דק'</span>
+        </div>
+        <div class="appt-actions">${actions}</div>
+      </div>`;
+  }).join('');
+
+  list.querySelectorAll('.appt-btn.cancel').forEach(b =>
+    b.addEventListener('click', () => cancelAppointment(b.dataset.id)));
+  list.querySelectorAll('.appt-btn.edit').forEach(b =>
+    b.addEventListener('click', () => startReschedule(b.dataset.id, appts)));
+}
+
+async function cancelAppointment(id) {
+  if (!confirm('לבטל את התור?')) return;
+  try {
+    await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
+    // Note: the matching Google Calendar event is removed once calendar sync is connected.
+  } catch (e) { console.warn('cancel failed:', e.message); }
+  openMyAppointments();
+}
+
+function startReschedule(id, appts) {
+  const appt = appts.find(a => String(a.id) === String(id));
+  if (!appt) return;
+  editingAppointment   = appt;
+  state.totalTime      = appt.duration_min;
+  state.selectedDate   = null;
+  state.selectedTime   = null;
+
+  const modal = document.getElementById('appts-modal');
+  if (modal) modal.style.display = 'none';
+
+  const next = document.getElementById('go-step3');
+  if (next) { next.textContent = 'עדכני תור ✓'; next.disabled = true; }
+
+  showStep(2);
+  renderCalendar();
+}
+
+async function updateAppointment() {
+  if (!editingAppointment) return;
+  const btn = document.getElementById('go-step3');
+  if (btn) { btn.disabled = true; btn.textContent = 'מעדכנת…'; }
+
+  try {
+    await MoriyaAuth.sb.from('appointments')
+      .update({ date: state.selectedDate, start_time: state.selectedTime })
+      .eq('id', editingAppointment.id);
+    // Note: the Google Calendar event is updated once calendar sync is connected.
+  } catch (e) { console.warn('update failed:', e.message); }
+
+  const [y, m, d] = state.selectedDate.split('-');
+  const details = document.getElementById('success-details');
+  const heading = document.querySelector('#step-success h3');
+  if (heading) heading.textContent = 'התור עודכן בהצלחה!';
+  if (details) details.innerHTML = `📅 ${d}/${m}/${y} ⏰ ${state.selectedTime}`;
+
+  editingAppointment = null;
+  if (btn) btn.textContent = 'המשיכי לפרטים ←';
+  showStep('success');
+}
+
+// Modal close handlers
+document.getElementById('appts-close')?.addEventListener('click', () => {
+  document.getElementById('appts-modal').style.display = 'none';
+});
+document.getElementById('appts-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'appts-modal') e.target.style.display = 'none';
+});

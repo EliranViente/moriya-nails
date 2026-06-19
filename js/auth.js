@@ -72,9 +72,12 @@ function renderAuthUI() {
     const adminLink = '';
     box.innerHTML = `
       ${adminLink}
+      <button class="nav-auth-btn myappts" id="btn-myappts">התורים שלי</button>
       <span class="nav-greeting">שלום ${name} 👋</span>
       <button class="nav-auth-btn logout" id="btn-logout">התנתקות</button>
     `;
+    const my = document.getElementById('btn-myappts');
+    if (my) my.addEventListener('click', () => window.openMyAppointments && window.openMyAppointments());
     const lo = document.getElementById('btn-logout');
     if (lo) lo.addEventListener('click', () => MoriyaAuth.signOut());
   } else {
