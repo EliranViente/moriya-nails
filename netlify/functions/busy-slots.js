@@ -40,13 +40,17 @@ exports.handler = async (event) => {
     const auth     = getAuth();
     const calendar = google.calendar({ version: 'v3', auth });
 
-    const timeMin = new Date(`${date}T${String(WORK_START).padStart(2,'0')}:00:00`);
-    const timeMax = new Date(`${date}T${String(WORK_END).padStart(2,'0')}:00:00`);
+    // Query the whole UTC day so the Israel work-hours window is fully covered
+    // regardless of DST. Returned busy times are converted to Israel minutes below.
+    const timeMin  = `${date}T00:00:00Z`;
+    const dayAfter = new Date(`${date}T00:00:00Z`);
+    dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+    const timeMax  = dayAfter.toISOString();
 
     const fbRes = await calendar.freebusy.query({
       requestBody: {
-        timeMin:  timeMin.toISOString(),
-        timeMax:  timeMax.toISOString(),
+        timeMin,
+        timeMax,
         timeZone: TZ,
         items:    [{ id: CALENDAR_ID }]
       }
