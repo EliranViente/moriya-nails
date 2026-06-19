@@ -1350,11 +1350,36 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 
 .contact-cards {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 280px));
+  grid-template-columns: repeat(3, minmax(0, 280px));
   justify-content: center;
   gap: 24px;
   margin-bottom: 40px;
 }
+@media (max-width: 900px) {
+  .contact-cards { grid-template-columns: repeat(2, minmax(0, 280px)); }
+}
+
+/* address / parking card */
+.address-card .nav-btns {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.nav-btn {
+  padding: 8px 14px;
+  border-radius: var(--radius-xl);
+  font-size: 0.82rem;
+  font-weight: 700;
+  background: var(--white);
+  color: var(--pink-500);
+  transition: transform var(--transition), box-shadow var(--transition);
+  white-space: nowrap;
+}
+.nav-btn:hover { transform: translateY(-2px); box-shadow: var(--shadow-md); }
+.nav-btn.waze { background: #33ccff; color: var(--white); }
+.nav-btn.maps { background: #ffffff; color: #1a73e8; }
 
 .contact-card {
   background: rgba(255,255,255,0.15);
