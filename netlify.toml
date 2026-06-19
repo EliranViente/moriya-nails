@@ -6,6 +6,10 @@
   publish = "."
   functions = "netlify/functions"
 
+# Bundle the shared verification helpers (lib/otp.js) with every function
+[functions]
+  included_files = ["lib/**"]
+
 # Map the frontend's /api/* calls to the serverless functions
 [[redirects]]
   from = "/api/busy-slots"
@@ -15,4 +19,19 @@
 [[redirects]]
   from = "/api/book"
   to = "/.netlify/functions/book"
+  status = 200
+
+[[redirects]]
+  from = "/api/manage-booking"
+  to = "/.netlify/functions/manage-booking"
+  status = 200
+
+[[redirects]]
+  from = "/api/otp-send"
+  to = "/.netlify/functions/otp-send"
+  status = 200
+
+[[redirects]]
+  from = "/api/otp-verify"
+  to = "/.netlify/functions/otp-verify"
   status = 200

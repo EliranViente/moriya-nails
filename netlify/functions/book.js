@@ -3,9 +3,39 @@
  * Creates a Google Calendar event for the appointment.
  */
 const { google } = require('googleapis');
+const otp = require('../../lib/otp');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
+
+/**
+ * Confirm the phone behind this booking was actually verified.
+ * Accepts either:
+ *   • a fresh verifyToken issued by /api/otp-verify, OR
+ *   • a logged-in user (accessToken) whose profile is already phone_verified
+ *     for this exact number (the "remembered" returning customer).
+ * If the OTP infrastructure isn't configured yet, verification is skipped so
+ * the site keeps working until setup is finished.
+ */
+async function isPhoneVerified(phone, verifyToken, accessToken) {
+  if (!otp.otpConfigured()) return true;
+  const canonical = otp.normalizePhone(phone);
+  if (!canonical) return false;
+
+  if (verifyToken && otp.verifyToken(verifyToken, canonical)) return true;
+
+  if (accessToken) {
+    const user = await otp.getUserFromToken(accessToken);
+    if (user) {
+      const profile = await otp.getProfile(user.id);
+      if (profile && profile.phone_verified &&
+          otp.normalizePhone(profile.phone) === canonical) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
 
 function getAuth() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -29,9 +59,21 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes } = body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes,
+          verifyToken, accessToken } = body;
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
+  }
+
+  // Server-side gate: never create a calendar event for an unverified phone.
+  try {
+    const ok = await isPhoneVerified(clientPhone, verifyToken, accessToken);
+    if (!ok) {
+      return { statusCode: 403, headers, body: JSON.stringify({ error: 'phone_not_verified' }) };
+    }
+  } catch (err) {
+    console.error('verification check error:', err.message);
+    return { statusCode: 500, headers, body: JSON.stringify({ error: 'verification_failed' }) };
   }
 
   try {
@@ -65,8 +107,8 @@ exports.handler = async (event) => {
         summary:     `💅 תור: ${clientName} – ${serviceNames}`,
         description,
         start: { dateTime: startLocal, timeZone: TZ },
-        end:   { dateTime: endLocal,   timeZone: TZ },
-        colorId: '4'
+        end:   { dateTime: endLocal,   timeZone: TZ }
+        // No colorId – the event inherits the calendar's default color/settings.
       }
     });
 

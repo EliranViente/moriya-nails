@@ -16,7 +16,10 @@ MoriyaNails/
 │   └── insta/          ← Real work photos used in the gallery collage
 ├── netlify.toml        ← Netlify config (static site + /api routes)
 ├── package.json        ← Dependencies for the serverless functions
-├── netlify/functions/  ← Booking backend on Netlify (busy-slots.js, book.js)
+├── netlify/functions/  ← Booking backend on Netlify (busy-slots.js, book.js,
+│                          otp-send.js, otp-verify.js)
+├── lib/otp.js          ← Shared phone-verification helpers (used by functions + server)
+├── supabase/schema.sql ← Database schema (run in Supabase SQL editor)
 └── server/             ← Same backend as a standalone Express server (local dev only)
     ├── server.js
     ├── package.json
@@ -140,6 +143,67 @@ Instagram bio.
 > No code changes are needed: in production the frontend calls `/api/...`, which
 > `netlify.toml` routes to the serverless functions. `API_BASE` only points to
 > `localhost:3001` when you run the old Express server locally.
+
+---
+
+## Phone verification (WhatsApp one-time code)
+
+Before an appointment is reserved, the visitor verifies their phone: they enter
+name + phone, receive a 6-digit code over **WhatsApp**, and type it back. Only
+then does the server create the calendar event.
+
+- A visitor logged in with **Google** verifies **once** – the verified number is
+  remembered on their profile (`profiles.phone_verified`), and on later bookings
+  their details auto-fill and they skip verification entirely.
+- A **guest** (not logged in) verifies the phone on every booking.
+- Verification is enforced **server-side** in `/api/book`, so it can't be bypassed
+  by calling the API directly.
+
+> **Graceful fallback:** if the verification environment variables below are *not*
+> set, the whole step is skipped automatically and booking works as before. Set
+> them when you're ready to turn verification on.
+
+### Step 1 – Run the database schema
+
+In Supabase → **SQL Editor → New query**, paste the contents of
+`supabase/schema.sql` and run it. (Re-running is safe – it only adds the new
+`phone_verified` columns and the `phone_verifications` table if missing.)
+
+### Step 2 – Get WhatsApp Cloud API credentials (free tier, Meta)
+
+1. Go to https://developers.facebook.com → **My Apps → Create App → Business**.
+2. Add the **WhatsApp** product. Meta gives you a free test phone number and a
+   **temporary access token** to start; for production, connect your own number
+   and generate a **permanent token** (System User token in Meta Business Settings).
+3. Note the **Phone number ID** (shown on the WhatsApp → API setup page).
+4. Create a message **template** of category **Authentication** (e.g. name
+   `otp_code`, language `Hebrew`/`he`). Use the standard authentication template:
+   one body parameter for the code + a "copy code" button. Wait for it to be
+   **Approved** (usually minutes).
+
+### Step 3 – Get the Supabase service-role key
+
+Supabase → **Project Settings → API** → copy the **`service_role`** secret key
+(server-side only – never put it in the frontend).
+
+### Step 4 – Add the environment variables
+
+On **Netlify** (Site configuration → Environment variables) — and in
+`server/.env` for local dev — add:
+
+| Variable | Value |
+|---|---|
+| `SUPABASE_URL` | `https://yspzwxyxhdjtpcqaebls.supabase.co` |
+| `SUPABASE_SERVICE_ROLE_KEY` | the `service_role` secret key |
+| `OTP_TOKEN_SECRET` | any long random string (e.g. `openssl rand -hex 32`) |
+| `WHATSAPP_TOKEN` | the WhatsApp access token |
+| `WHATSAPP_PHONE_ID` | the WhatsApp phone number ID |
+| `WHATSAPP_TEMPLATE_NAME` | your template name (default `otp_code`) |
+| `WHATSAPP_LANG` | template language code (default `he`) |
+| `WHATSAPP_API_VERSION` | optional, default `v21.0` |
+
+Then **Deploys → Trigger deploy → Deploy site** so the functions pick up the
+new variables. That's it – verification is now live.
 
 ---
 

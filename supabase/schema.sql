@@ -18,12 +18,18 @@ $$;
 --  1) PROFILES – one row per logged-in user (for autofill)
 -- ============================================================
 create table if not exists public.profiles (
-  id          uuid primary key references auth.users(id) on delete cascade,
-  email       text,
-  full_name   text,
-  phone       text,
-  created_at  timestamptz default now()
+  id                uuid primary key references auth.users(id) on delete cascade,
+  email             text,
+  full_name         text,
+  phone             text,
+  phone_verified    boolean     not null default false,
+  phone_verified_at timestamptz,
+  created_at        timestamptz default now()
 );
+
+-- For existing databases created before phone verification was added:
+alter table public.profiles add column if not exists phone_verified    boolean     not null default false;
+alter table public.profiles add column if not exists phone_verified_at timestamptz;
 
 -- Auto-create a profile row whenever a new user signs up with Google
 create or replace function public.handle_new_user()
@@ -83,11 +89,51 @@ create index if not exists idx_appointments_date on public.appointments(date);
 create index if not exists idx_appointments_user on public.appointments(user_id);
 
 -- ============================================================
+--  4) PHONE VERIFICATIONS – short-lived OTP codes (server-only)
+--     Written/read exclusively by the serverless functions via the
+--     service-role key. RLS is enabled with NO policies, so the
+--     anon/authenticated clients can never read or write codes.
+-- ============================================================
+create table if not exists public.phone_verifications (
+  phone        text primary key,          -- E.164, e.g. +972501234567
+  code_hash    text        not null,      -- sha256(code + secret)
+  expires_at   timestamptz not null,
+  attempts     int         not null default 0,
+  last_sent_at timestamptz not null default now()
+);
+
+-- ============================================================
+--  Guard: only the service role may flip phone_verified.
+--  A logged-in client updating its own profile (anon key) keeps the
+--  previous verification state, so the flag can't be forged.
+-- ============================================================
+create or replace function public.guard_phone_verified()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if auth.role() is distinct from 'service_role' then
+    new.phone_verified    := old.phone_verified;
+    new.phone_verified_at := old.phone_verified_at;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_guard_phone_verified on public.profiles;
+create trigger trg_guard_phone_verified
+  before update on public.profiles
+  for each row execute function public.guard_phone_verified();
+
+-- ============================================================
 --  ROW LEVEL SECURITY
 -- ============================================================
-alter table public.profiles     enable row level security;
-alter table public.availability enable row level security;
-alter table public.appointments enable row level security;
+alter table public.profiles           enable row level security;
+alter table public.availability       enable row level security;
+alter table public.appointments       enable row level security;
+alter table public.phone_verifications enable row level security;
+-- NOTE: phone_verifications intentionally has NO policies → only the
+-- service-role key (used by the serverless functions) can touch it.
 
 -- ----- PROFILES -----
 drop policy if exists "profiles_select" on public.profiles;

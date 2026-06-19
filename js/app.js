@@ -924,16 +924,26 @@ function renderApptsList(appts) {
   }).join('');
 
   list.querySelectorAll('.appt-btn.cancel').forEach(b =>
-    b.addEventListener('click', () => cancelAppointment(b.dataset.id)));
+    b.addEventListener('click', () => cancelAppointment(b.dataset.id, appts)));
   list.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => startReschedule(b.dataset.id, appts)));
 }
 
-async function cancelAppointment(id) {
+async function cancelAppointment(id, appts) {
   if (!confirm('לבטל את התור?')) return;
+  const appt = (appts || []).find(a => String(a.id) === String(id));
   try {
+    // 1) Remove the matching event from Google Calendar.
+    if (appt && appt.google_event_id) {
+      const accessToken = await getAccessToken();
+      await fetch(`${API_BASE}/api/manage-booking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel', eventId: appt.google_event_id, accessToken })
+      });
+    }
+    // 2) Mark the appointment cancelled in Supabase.
     await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
-    // Note: the matching Google Calendar event is removed once calendar sync is connected.
   } catch (e) { console.warn('cancel failed:', e.message); }
   openMyAppointments();
 }
@@ -962,10 +972,26 @@ async function updateAppointment() {
   if (btn) { btn.disabled = true; btn.textContent = 'מעדכנת…'; }
 
   try {
+    // 1) Move the matching event on Google Calendar.
+    if (editingAppointment.google_event_id) {
+      const accessToken = await getAccessToken();
+      await fetch(`${API_BASE}/api/manage-booking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action:   'update',
+          eventId:  editingAppointment.google_event_id,
+          date:     state.selectedDate,
+          time:     state.selectedTime,
+          duration: editingAppointment.duration_min,
+          accessToken
+        })
+      });
+    }
+    // 2) Update the appointment in Supabase.
     await MoriyaAuth.sb.from('appointments')
       .update({ date: state.selectedDate, start_time: state.selectedTime })
       .eq('id', editingAppointment.id);
-    // Note: the Google Calendar event is updated once calendar sync is connected.
   } catch (e) { console.warn('update failed:', e.message); }
 
   const [y, m, d] = state.selectedDate.split('-');
