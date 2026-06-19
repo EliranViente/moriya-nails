@@ -335,6 +335,7 @@ document.getElementById('back-step1')?.addEventListener('click', () => showStep(
 document.getElementById('go-step3')?.addEventListener('click', () => {
   showStep(3);
   renderOrderSummary();
+  prefillUserDetails();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -365,6 +366,17 @@ function renderOrderSummary() {
     <div class="summary-item total"><span>⏱ זמן כולל: ${state.totalTime} דקות</span><span>${state.totalPrice} ₪</span></div>
     ${decoNote}
   `;
+}
+
+// Prefill name & phone from the logged-in user's profile (autofill)
+function prefillUserDetails() {
+  if (!window.MoriyaAuth || !MoriyaAuth.isLoggedIn()) return;
+  const nameEl  = document.getElementById('f-name');
+  const phoneEl = document.getElementById('f-phone');
+  const name    = MoriyaAuth.displayName();
+  const phone   = (MoriyaAuth.profile && MoriyaAuth.profile.phone) || '';
+  if (nameEl  && !nameEl.value  && name)  nameEl.value  = name;
+  if (phoneEl && !phoneEl.value && phone) phoneEl.value = phone;
 }
 
 document.getElementById('back-step2')?.addEventListener('click', () => showStep(2));
@@ -401,6 +413,8 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     ...state.addons
   ];
 
+  // 1) Create the Google Calendar event (existing backend)
+  let googleEventId = null;
   try {
     const res = await fetch(`${API_BASE}/api/book`, {
       method: 'POST',
@@ -416,14 +430,41 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
         totalPrice:  state.totalPrice
       })
     });
-
-    if (!res.ok) throw new Error('Server error');
-    showSuccess(name, phone, notes);
+    if (res.ok) {
+      const data = await res.json().catch(() => ({}));
+      googleEventId = data.eventId || null;
+    }
   } catch (err) {
-    console.error(err);
-    // If backend not connected, still show success UI (demo mode)
-    showSuccess(name, phone, notes);
+    console.warn('Calendar booking failed (demo mode?):', err.message);
   }
+
+  // 2) Save to Supabase (profile + appointment) for logged-in users
+  try {
+    if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
+      const uid = MoriyaAuth.user.id;
+      // remember name+phone for next-time autofill
+      await MoriyaAuth.sb.from('profiles').update({ full_name: name, phone }).eq('id', uid);
+      MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { full_name: name, phone });
+      // store the appointment
+      await MoriyaAuth.sb.from('appointments').insert({
+        user_id:         uid,
+        client_name:     name,
+        client_phone:    phone,
+        date:            state.selectedDate,
+        start_time:      state.selectedTime,
+        duration_min:    state.totalTime,
+        services:        state.addons,
+        total_price:     state.totalPrice,
+        status:          'booked',
+        google_event_id: googleEventId,
+        notes:           notes || null
+      });
+    }
+  } catch (err) {
+    console.warn('Supabase save failed:', err.message);
+  }
+
+  showSuccess(name, phone, notes);
 });
 
 function showSuccess(name, phone, notes) {

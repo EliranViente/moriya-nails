@@ -148,6 +148,80 @@ ul { list-style: none; }
   background: var(--pink-50);
 }
 
+/* nav cluster (links + auth + hamburger) */
+.nav-cluster {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+
+/* auth area (login / greeting / logout) */
+.nav-auth {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.nav-greeting {
+  font-weight: 600;
+  font-size: 0.95rem;
+  color: var(--gray-700);
+  white-space: nowrap;
+}
+.nav-auth-btn {
+  font-family: var(--font);
+  cursor: pointer;
+  border-radius: var(--radius-xl);
+  transition: all var(--transition);
+  white-space: nowrap;
+}
+.nav-auth-btn.google {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 9px 18px;
+  border: 1.5px solid var(--pink-200);
+  background: var(--white);
+  color: var(--gray-700);
+  font-weight: 600;
+  font-size: 0.9rem;
+  box-shadow: var(--shadow-sm);
+}
+.nav-auth-btn.google:hover {
+  border-color: var(--pink-400);
+  background: var(--pink-50);
+  transform: translateY(-1px);
+}
+.nav-auth-btn.logout {
+  padding: 7px 16px;
+  border: 1.5px solid var(--pink-100);
+  background: transparent;
+  color: var(--gray-600);
+  font-size: 0.85rem;
+}
+.nav-auth-btn.logout:hover {
+  background: var(--pink-50);
+  color: var(--pink-500);
+  border-color: var(--pink-200);
+}
+.nav-admin-link {
+  padding: 8px 16px;
+  border-radius: var(--radius-xl);
+  background: linear-gradient(135deg, var(--pink-400), var(--pink-500));
+  color: var(--white);
+  font-weight: 600;
+  font-size: 0.85rem;
+  box-shadow: 0 4px 12px rgba(232,88,128,0.3);
+  transition: transform var(--transition);
+}
+.nav-admin-link:hover { transform: translateY(-1px); }
+
+@media (max-width: 720px) {
+  .nav-greeting { display: none; }       /* keep navbar compact on mobile */
+  .nav-auth-btn.google span { display: none; }  /* show just the Google icon */
+  .nav-auth-btn.google { padding: 9px 12px; }
+  .nav-cluster { gap: 10px; }
+}
+
 .hamburger {
   display: none;
   flex-direction: column;

@@ -20,15 +20,18 @@
       <a href="#home" class="nav-logo" aria-label="Moriya Nails - דף הבית">
         <img src="images/logo-mark.png" alt="Moriya Nails" class="nav-logo-img" />
       </a>
-      <button class="hamburger" id="hamburger" aria-label="תפריט">
-        <span></span><span></span><span></span>
-      </button>
-      <ul class="nav-links" id="nav-links">
-        <li><a href="#services" class="nav-link">שירותים ומחירים</a></li>
-        <li><a href="#booking" class="nav-link">הזמנת תור</a></li>
-        <li><a href="#gallery" class="nav-link">גלריה</a></li>
-        <li><a href="#contact" class="nav-link">צרי קשר</a></li>
-      </ul>
+      <div class="nav-cluster">
+        <ul class="nav-links" id="nav-links">
+          <li><a href="#services" class="nav-link">שירותים ומחירים</a></li>
+          <li><a href="#booking" class="nav-link">הזמנת תור</a></li>
+          <li><a href="#gallery" class="nav-link">גלריה</a></li>
+          <li><a href="#contact" class="nav-link">צרי קשר</a></li>
+        </ul>
+        <div class="nav-auth" id="nav-auth"></div>
+        <button class="hamburger" id="hamburger" aria-label="תפריט">
+          <span></span><span></span><span></span>
+        </button>
+      </div>
     </div>
   </nav>
 
@@ -521,6 +524,8 @@
     </div>
   </footer>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="js/auth.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>
