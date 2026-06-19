@@ -38,8 +38,16 @@ exports.handler = async (event) => {
     const auth     = getAuth();
     const calendar = google.calendar({ version: 'v3', auth });
 
-    const startDT = new Date(`${date}T${time}:00`);
-    const endDT   = new Date(startDT.getTime() + duration * 60000);
+    // Build wall-clock datetimes in Jerusalem time (no UTC conversion).
+    // The server runs in UTC, so we must NOT use Date()/toISOString() here —
+    // we send the local time string together with timeZone, and Google
+    // interprets it in Asia/Jerusalem.
+    const [sh, sm]  = time.split(':').map(Number);
+    const endTotal  = sh * 60 + sm + Number(duration);
+    const eh        = String(Math.floor(endTotal / 60)).padStart(2, '0');
+    const em        = String(endTotal % 60).padStart(2, '0');
+    const startLocal = `${date}T${time}:00`;
+    const endLocal   = `${date}T${eh}:${em}:00`;
 
     const serviceNames = (services || []).map(s => s.name).join(', ');
     const description  = [
@@ -56,8 +64,8 @@ exports.handler = async (event) => {
       requestBody: {
         summary:     `💅 תור: ${clientName} – ${serviceNames}`,
         description,
-        start: { dateTime: startDT.toISOString(), timeZone: TZ },
-        end:   { dateTime: endDT.toISOString(),   timeZone: TZ },
+        start: { dateTime: startLocal, timeZone: TZ },
+        end:   { dateTime: endLocal,   timeZone: TZ },
         colorId: '4'
       }
     });
