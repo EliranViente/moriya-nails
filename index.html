@@ -198,17 +198,20 @@
         <div class="booking-step active" id="step-1">
           <h3 class="step-title">בחרי את הטיפולים שלך</h3>
 
-          <!-- Base treatment (always included) -->
+          <!-- Base treatment (checkbox, on by default; remove for a quick fix) -->
           <div class="base-treatment-row">
-            <div class="base-badge">✓ כלול תמיד</div>
-            <div class="treatment-detail">
-              <span class="t-name">מניקור לק ג'ל</span>
-              <span class="t-desc">הטיפול הבסיסי – תמיד כלול בהזמנה</span>
-            </div>
-            <div class="treatment-nums">
-              <span class="t-time">75 דק'</span>
-              <span class="t-price">140 ₪</span>
-            </div>
+            <label class="addon-checkbox-label">
+              <input type="checkbox" class="addon-check" id="chk-base" checked />
+              <div class="custom-check"></div>
+              <div class="treatment-detail">
+                <span class="t-name">מניקור לק ג'ל</span>
+                <span class="t-desc">הטיפול הבסיסי – ניתן להסיר לתיקון/השלמה מהירה</span>
+              </div>
+              <div class="treatment-nums">
+                <span class="t-time">75 דק'</span>
+                <span class="t-price">140 ₪</span>
+              </div>
+            </label>
           </div>
 
           <!-- Checkbox add-ons -->
@@ -359,6 +362,10 @@
               </div>
             </div>
           </div>
+
+          <button class="btn-nearest" id="btn-nearest" type="button">
+            ✨ מצאי לי את התור הקרוב ביותר
+          </button>
 
           <div class="step-nav">
             <button class="btn-back" id="back-step1">→ חזרה</button>

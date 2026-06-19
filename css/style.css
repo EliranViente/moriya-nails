@@ -1643,3 +1643,32 @@ textarea:focus-visible,
   text-align: center;
   max-width: 130px;
 }
+
+/* ═══════════════════════════════════════════
+   BASE TOGGLE + NEAREST-SLOT BUTTON
+═══════════════════════════════════════════ */
+.base-treatment-row.unchecked {
+  opacity: 0.55;
+  filter: grayscale(0.35);
+}
+
+.btn-nearest {
+  display: block;
+  width: 100%;
+  margin-top: 20px;
+  padding: 14px 20px;
+  background: linear-gradient(135deg, #fff7ec, #fdf0f4);
+  border: 1.5px solid var(--gold);
+  border-radius: var(--radius-xl);
+  color: var(--gold-dark);
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 1rem;
+  cursor: pointer;
+  transition: transform var(--transition), box-shadow var(--transition);
+}
+.btn-nearest:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+.btn-nearest:disabled { opacity: 0.6; cursor: wait; }

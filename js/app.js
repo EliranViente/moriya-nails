@@ -61,8 +61,14 @@ document.querySelectorAll('.service-card, .about-card, .contact-card, .g-item, .
 
 // Helper: recalculate and display totals
 function recalculate() {
-  let totalTime  = state.baseTime;
-  let totalPrice = state.basePrice;
+  // Base manicure is a checkbox now (on by default). Without it = quick fix.
+  const baseChecked = document.getElementById('chk-base')?.checked ?? true;
+  state.baseIncluded = baseChecked;
+  const baseRow = document.querySelector('.base-treatment-row');
+  if (baseRow) baseRow.classList.toggle('unchecked', !baseChecked);
+
+  let totalTime  = baseChecked ? state.baseTime  : 0;
+  let totalPrice = baseChecked ? state.basePrice : 0;
   const addons   = [];
 
   // Checkbox add-ons
@@ -125,6 +131,10 @@ function recalculate() {
 
   document.getElementById('sum-time').textContent  = totalTime + ' דקות';
   document.getElementById('sum-price').textContent = totalPrice + ' ₪';
+
+  // Can't continue with nothing selected
+  const goStep2 = document.getElementById('go-step2');
+  if (goStep2) goStep2.disabled = totalTime === 0;
 }
 
 // Attach listeners
@@ -294,55 +304,41 @@ async function loadTimeSlots(dateStr) {
   renderSlots(slots, slotsGrid);
 }
 
-// Minimum bookable gap: a standard appointment is 75 minutes, so we never leave
-// a free gap shorter than this before a booking (it would be wasted time).
-const MIN_GAP = 75;
+// Slot model:
+//  • Full appointments (> 30 min) use fixed start times.
+//  • Quick fixes (≤ 30 min) open every 10 min, by availability, until 17:30.
+const FIXED_SLOTS     = [9*60, 11*60, 12*60+30, 14*60+15, 15*60+45]; // 9:00,11:00,12:30,14:15,15:45
+const SMALL_THRESHOLD = 30;            // minutes – at/under this is a "quick fix"
+const SMALL_STEP      = 10;            // minutes between quick-fix slots
+const SMALL_START     = 9 * 60;        // 09:00
+const SMALL_END       = 17 * 60 + 30;  // 17:30 (quick fix must finish by then)
 
-// Build slot list (9:00–17:00, every 30 min, must finish by 17:00)
 function buildAvailableSlots(durationMin, busySlots, dateStr) {
-  const START = 9 * 60;   // minutes since midnight
-  const END   = 17 * 60;
-  const STEP  = 30;
-  const slots = [];
-
-  // If the selected date is today, block times that have already passed.
-  const now      = new Date();
   const pad      = n => String(n).padStart(2, '0');
+  const now      = new Date();
   const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const isToday  = dateStr === todayStr;
   const nowMin   = now.getHours() * 60 + now.getMinutes();
 
-  for (let m = START; m + durationMin <= END; m += STEP) {
-    const endM = m + durationMin;
-
-    // Does this slot overlap an existing booking?
-    const busy = busySlots.some(b => m < b.end && endM > b.start);
-
-    // Find the boundary right before this slot: either the start of the day,
-    // or the end of the latest booking that finishes at/before this slot.
-    let boundaryBefore = START;
-    busySlots.forEach(b => {
-      if (b.end <= m && b.end > boundaryBefore) boundaryBefore = b.end;
-    });
-    const gapBefore = m - boundaryBefore;
-
-    // Block slots that would leave a small (1–74 min) unfillable gap before them.
-    const wastesGap = gapBefore > 0 && gapBefore < MIN_GAP;
-
-    // Block slots whose start time has already passed (only relevant for today).
-    const isPast = isToday && m <= nowMin;
-
-    let reason = null;
-    if (isPast)               reason = 'past';
-    else if (wastesGap && !busy) reason = 'gap';
-
-    slots.push({
-      label: `${pad(Math.floor(m/60))}:${pad(m%60)}`,
-      busy: busy || wastesGap || isPast,
-      blockedReason: reason
-    });
+  // Choose the candidate start times.
+  let starts;
+  if (durationMin > SMALL_THRESHOLD) {
+    starts = FIXED_SLOTS.slice();
+  } else {
+    starts = [];
+    for (let m = SMALL_START; m + durationMin <= SMALL_END; m += SMALL_STEP) starts.push(m);
   }
-  return slots;
+
+  return starts.map(m => {
+    const endM   = m + durationMin;
+    const busy   = busySlots.some(b => m < b.end && endM > b.start); // overlaps a booking
+    const isPast = isToday && m <= nowMin;                            // already passed
+    return {
+      label: `${pad(Math.floor(m/60))}:${pad(m%60)}`,
+      busy: busy || isPast,
+      blockedReason: isPast ? 'past' : null
+    };
+  });
 }
 
 function renderSlots(slots, container) {
@@ -373,6 +369,65 @@ function renderSlots(slots, container) {
   });
 }
 
+// ─── Nearest available appointment ────────────────────────────────────────────
+async function findNearestSlot() {
+  const pad = n => String(n).padStart(2, '0');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+
+  // Dates the logged-in user already booked (one appointment per day)
+  const bookedDates = new Set();
+  if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
+    try {
+      const { data } = await MoriyaAuth.sb.from('appointments')
+        .select('date').eq('user_id', MoriyaAuth.user.id).neq('status', 'cancelled');
+      (data || []).forEach(a => bookedDates.add(a.date));
+    } catch (e) { /* ignore */ }
+  }
+
+  const d = new Date(today);
+  for (let i = 0; i < 70; i++) {                 // search up to ~10 weeks ahead
+    if (d.getDay() === 5) {                       // Fridays only
+      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+      if (!bookedDates.has(dateStr)) {
+        let busy = [];
+        try {
+          const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
+          const data = await res.json();
+          busy = data.busySlots || [];
+        } catch (e) { /* treat as free */ }
+        const free = buildAvailableSlots(state.totalTime, busy, dateStr).find(s => !s.busy);
+        if (free) return { date: dateStr, time: free.label };
+      }
+    }
+    d.setDate(d.getDate() + 1);
+  }
+  return null;
+}
+
+async function goToNearestSlot() {
+  const btn = document.getElementById('btn-nearest');
+  if (btn) { btn.disabled = true; btn.textContent = '🔎 מחפשת תור פנוי…'; }
+
+  const result = await findNearestSlot();
+
+  if (btn) { btn.disabled = false; btn.textContent = '✨ מצאי לי את התור הקרוב ביותר'; }
+  if (!result) { alert('לא נמצא תור פנוי בקרוב. נסי שוב מאוחר יותר 💅'); return; }
+
+  // Navigate the calendar to that month and auto-select the found slot
+  const [y, m] = result.date.split('-').map(Number);
+  calYear = y; calMonth = m - 1;
+  state.selectedDate = result.date;
+  state.selectedTime = null;
+  renderCalendar();
+  await loadTimeSlots(result.date);
+
+  const grid = document.getElementById('slots-grid');
+  const el   = grid && grid.querySelector(`.time-slot[data-time="${result.time}"]`);
+  if (el) { el.click(); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+}
+
+document.getElementById('btn-nearest')?.addEventListener('click', goToNearestSlot);
+
 document.getElementById('back-step1')?.addEventListener('click', () => showStep(1));
 document.getElementById('go-step3')?.addEventListener('click', () => {
   if (editingAppointment) { updateAppointment(); return; }   // reschedule flow
@@ -400,11 +455,15 @@ function renderOrderSummary() {
     ? `<p class="summary-deco-note">✦ מחיר הקישוט (5–40 ₪) ייקבע בתור לפי העיצוב ואינו כלול בסכום למעלה</p>`
     : '';
 
+  const baseRow = state.baseIncluded
+    ? `<div class="summary-item"><span>💅 מניקור לק ג'ל (בסיסי)</span><span>140 ₪</span></div>`
+    : '';
+
   box.innerHTML = `
     <h4>סיכום הזמנה</h4>
     <div class="summary-item"><span>📅 תאריך</span><span>${dateDisplay} (שישי)</span></div>
     <div class="summary-item"><span>⏰ שעה</span><span>${state.selectedTime}</span></div>
-    <div class="summary-item"><span>💅 מניקור לק ג'ל (בסיסי)</span><span>140 ₪</span></div>
+    ${baseRow}
     ${addonRows}
     <div class="summary-item total"><span>⏱ זמן כולל: ${state.totalTime} דקות</span><span>${state.totalPrice} ₪</span></div>
     ${decoNote}
@@ -469,7 +528,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   btn.textContent = 'שולחת…';
 
   const services = [
-    { name: "מניקור לק ג'ל", time: 75, price: 140 },
+    ...(state.baseIncluded ? [{ name: "מניקור לק ג'ל", time: 75, price: 140 }] : []),
     ...state.addons
   ];
 
@@ -513,7 +572,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
         date:            state.selectedDate,
         start_time:      state.selectedTime,
         duration_min:    state.totalTime,
-        services:        state.addons,
+        services:        services,
         total_price:     state.totalPrice,
         status:          'booked',
         google_event_id: googleEventId,
