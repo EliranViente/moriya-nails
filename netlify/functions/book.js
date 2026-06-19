@@ -4,7 +4,7 @@
  */
 const { google } = require('googleapis');
 
-const CALENDAR_ID = process.env.CALENDAR_ID || 'moriya681@gmail.com';
+const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
 
 function getAuth() {
