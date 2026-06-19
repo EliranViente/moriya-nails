@@ -54,7 +54,7 @@ exports.handler = async (event) => {
     const ev = await calendar.events.insert({
       calendarId: CALENDAR_ID,
       requestBody: {
-        summary:     `💅 ${clientName} – ${serviceNames}`,
+        summary:     `💅 תור: ${clientName} – ${serviceNames}`,
         description,
         start: { dateTime: startDT.toISOString(), timeZone: TZ },
         end:   { dateTime: endDT.toISOString(),   timeZone: TZ },

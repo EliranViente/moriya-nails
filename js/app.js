@@ -264,7 +264,23 @@ async function loadTimeSlots(dateStr) {
     console.warn('Backend not reachable, showing all slots as available');
   }
 
-  const slots = buildAvailableSlots(state.totalTime, busySlots);
+  // A logged-in user may have only one appointment per day.
+  if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
+    try {
+      const { data: existing } = await MoriyaAuth.sb
+        .from('appointments')
+        .select('id')
+        .eq('user_id', MoriyaAuth.user.id)
+        .eq('date', dateStr)
+        .neq('status', 'cancelled');
+      if (existing && existing.length > 0) {
+        slotsGrid.innerHTML = '<div class="no-slots">כבר קבעת תור ליום זה 💅<br/>ניתן לקבוע תור אחד בלבד בכל יום</div>';
+        return;
+      }
+    } catch (e) { /* on error, allow booking */ }
+  }
+
+  const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr);
   renderSlots(slots, slotsGrid);
 }
 
@@ -273,11 +289,18 @@ async function loadTimeSlots(dateStr) {
 const MIN_GAP = 75;
 
 // Build slot list (9:00–17:00, every 30 min, must finish by 17:00)
-function buildAvailableSlots(durationMin, busySlots) {
+function buildAvailableSlots(durationMin, busySlots, dateStr) {
   const START = 9 * 60;   // minutes since midnight
   const END   = 17 * 60;
   const STEP  = 30;
   const slots = [];
+
+  // If the selected date is today, block times that have already passed.
+  const now      = new Date();
+  const pad      = n => String(n).padStart(2, '0');
+  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const isToday  = dateStr === todayStr;
+  const nowMin   = now.getHours() * 60 + now.getMinutes();
 
   for (let m = START; m + durationMin <= END; m += STEP) {
     const endM = m + durationMin;
@@ -296,10 +319,17 @@ function buildAvailableSlots(durationMin, busySlots) {
     // Block slots that would leave a small (1–74 min) unfillable gap before them.
     const wastesGap = gapBefore > 0 && gapBefore < MIN_GAP;
 
+    // Block slots whose start time has already passed (only relevant for today).
+    const isPast = isToday && m <= nowMin;
+
+    let reason = null;
+    if (isPast)               reason = 'past';
+    else if (wastesGap && !busy) reason = 'gap';
+
     slots.push({
-      label: `${String(Math.floor(m/60)).padStart(2,'0')}:${String(m%60).padStart(2,'0')}`,
-      busy: busy || wastesGap,
-      blockedReason: wastesGap && !busy ? 'gap' : null
+      label: `${pad(Math.floor(m/60))}:${pad(m%60)}`,
+      busy: busy || wastesGap || isPast,
+      blockedReason: reason
     });
   }
   return slots;
@@ -313,6 +343,8 @@ function renderSlots(slots, container) {
   container.innerHTML = slots.map(s => {
     const title = s.blockedReason === 'gap'
       ? 'title="לא ניתן להזמין – נשאר פרק זמן קצר מדי לפני התור"'
+      : s.blockedReason === 'past'
+      ? 'title="השעה כבר עברה"'
       : '';
     return `
     <div class="time-slot ${s.busy ? 'busy' : ''} ${s.blockedReason === 'gap' ? 'gap-blocked' : ''}"
@@ -405,6 +437,23 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   if (!valid) return;
 
   const btn = e.target.querySelector('.btn-confirm');
+
+  // Guard: one appointment per day per logged-in user (final safety check)
+  if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
+    try {
+      const { data: existing } = await MoriyaAuth.sb
+        .from('appointments')
+        .select('id')
+        .eq('user_id', MoriyaAuth.user.id)
+        .eq('date', state.selectedDate)
+        .neq('status', 'cancelled');
+      if (existing && existing.length > 0) {
+        alert('כבר קבעת תור ליום זה. ניתן לקבוע תור אחד בלבד בכל יום.');
+        return;
+      }
+    } catch (e) { /* on error, continue */ }
+  }
+
   btn.disabled    = true;
   btn.textContent = 'שולחת…';
 
