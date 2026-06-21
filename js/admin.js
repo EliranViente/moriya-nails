@@ -1,0 +1,722 @@
+/* ═══════════════════════════════════════════
+   MORIYA NAILS – Admin Dashboard
+   Stats, charts, availability & appointment management.
+   Access is restricted to admin emails (see auth.js).
+═══════════════════════════════════════════ */
+
+const API_BASE = window.location.hostname === 'localhost'
+  ? 'http://localhost:3001'
+  : '';
+
+// Each open working window is sliced into bookable appointments of this length.
+const SLOT_LEN = 90; // minutes (1.5h)
+
+// ─── Small helpers ────────────────────────────────────────────────────────────
+const pad = n => String(n).padStart(2, '0');
+const toMin = hhmm => { const [h, m] = hhmm.split(':').map(Number); return h * 60 + m; };
+const fromMin = m => `${pad(Math.floor(m / 60))}:${pad(m % 60)}`;
+
+function todayStr() {
+  const n = new Date();
+  return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+}
+function dateStrOffset(days) {
+  const n = new Date(); n.setDate(n.getDate() + days);
+  return `${n.getFullYear()}-${pad(n.getMonth() + 1)}-${pad(n.getDate())}`;
+}
+function fmtDate(dateStr) {
+  const [Y, M, D] = dateStr.split('-');
+  return `${D}/${M}/${Y}`;
+}
+const HE_DOW = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+function dowLabel(dateStr) {
+  const d = new Date(`${dateStr}T00:00:00`);
+  return HE_DOW[d.getDay()];
+}
+function ils(n) { return Math.round(n).toLocaleString('he-IL') + ' ₪'; }
+
+async function getAccessToken() {
+  try {
+    const { data } = await MoriyaAuth.sb.auth.getSession();
+    return (data && data.session && data.session.access_token) || null;
+  } catch { return null; }
+}
+
+// ─── Auth gate ────────────────────────────────────────────────────────────────
+function waitForAuth() {
+  return new Promise(resolve => {
+    if (window.MoriyaAuth && MoriyaAuth.ready) return resolve();
+    const t = setInterval(() => {
+      if (window.MoriyaAuth && MoriyaAuth.ready) { clearInterval(t); resolve(); }
+    }, 60);
+  });
+}
+
+async function bootstrap() {
+  await waitForAuth();
+  const gate = document.getElementById('admin-gate');
+  const msg = document.getElementById('gate-msg');
+  const actions = document.getElementById('gate-actions');
+
+  if (!MoriyaAuth.isLoggedIn()) {
+    msg.textContent = 'יש להתחבר כדי לגשת ללוח הניהול';
+    actions.style.display = 'flex';
+    actions.innerHTML = '<button class="admin-btn primary" id="gate-login">התחברות עם Google</button>';
+    document.getElementById('gate-login').addEventListener('click', () => MoriyaAuth.signIn());
+    return;
+  }
+  if (!MoriyaAuth.isAdmin()) {
+    msg.textContent = 'אין לך הרשאת גישה ללוח הניהול 🔒';
+    actions.style.display = 'flex';
+    actions.innerHTML = '<a class="admin-btn ghost" href="index.html">← חזרה לאתר</a>';
+    return;
+  }
+
+  // Authorized — reveal the dashboard.
+  gate.style.display = 'none';
+  document.getElementById('admin-app').style.display = 'block';
+  document.getElementById('admin-who').textContent = `שלום ${MoriyaAuth.firstName() || ''} 👋`;
+  document.getElementById('admin-logout').addEventListener('click', () => MoriyaAuth.signOut());
+
+  initDashboard();
+}
+
+const HE_MONTHS = ['ינואר','פברואר','מרץ','אפריל','מאי','יוני','יולי','אוגוסט','ספטמבר','אוקטובר','נובמבר','דצמבר'];
+const HE_DAY_NAMES = ["א'","ב'","ג'","ד'","ה'","ו'","ש'"];
+
+// ─── Dashboard state ──────────────────────────────────────────────────────────
+const dash = {
+  appointments: [],   // all appointments (admin sees everything via RLS)
+  clientsCount: 0,
+  chartRange: 30,
+  apptFilter: 'upcoming',
+  charts: {},         // Chart.js instances
+};
+
+// Availability calendar state
+let adminSelDate  = null;
+let adminCalYear  = new Date().getFullYear();
+let adminCalMonth = new Date().getMonth();
+let dashDayRows   = [];   // availability rows for the selected day
+let dashDayBlocks = [];   // break intervals {start,end} for the selected day
+
+async function initDashboard() {
+  await Promise.all([loadAppointments(), loadClientsCount()]);
+  renderKPIs();
+  renderCharts();
+  renderAppointments();
+  populateTimeSelects();
+  wireAvailabilityEditor();
+  wireControls();
+
+  // Default the availability editor to the next Friday and open the calendar there.
+  adminSelDate = nextFridayStr();
+  const [y, m] = adminSelDate.split('-').map(Number);
+  adminCalYear = y; adminCalMonth = m - 1;
+  setEditorTime('start', '09:00');
+  setEditorTime('end', '17:00');
+  await renderAdminCalendar();
+  selectAdminDate(adminSelDate);
+}
+
+function nextFridayStr() {
+  const d = new Date();
+  d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || 7));
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// ─── Availability calendar ────────────────────────────────────────────────────
+// Per-day model (mirrors the public site): Fridays are work days by default
+// (09:00–17:00); the admin can open other days, add breaks, or mark a day closed.
+const DEFAULT_FRIDAY = [{ start: 9 * 60, end: 17 * 60 }]; // 09:00–17:00
+const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
+
+// The effective open windows for a day, applying the Friday default.
+function effectiveOpen(dateStr, info) {
+  if (info && info.closed) return [];
+  if (info && info.open && info.open.length) return info.open;
+  return isFridayStr(dateStr) ? DEFAULT_FRIDAY.map(w => ({ ...w })) : [];
+}
+
+// Group a month's availability rows by date → {open[], closed}.
+async function getMonthDayStates(year, month /* 0-based */) {
+  const first   = `${year}-${pad(month + 1)}-01`;
+  const lastNum = new Date(year, month + 1, 0).getDate();
+  const last    = `${year}-${pad(month + 1)}-${pad(lastNum)}`;
+  const byDate = new Map();
+  try {
+    const { data } = await MoriyaAuth.sb
+      .from('availability').select('date,start_time,end_time,kind').gte('date', first).lte('date', last);
+    (data || []).forEach(r => {
+      const info = byDate.get(r.date) || { open: [], closed: false };
+      if (r.kind === 'closed') info.closed = true;
+      else if (r.kind === 'open') info.open.push({ start: toMin(r.start_time.slice(0, 5)), end: toMin(r.end_time.slice(0, 5)) });
+      byDate.set(r.date, info);
+    });
+  } catch (e) { /* defaults still apply */ }
+  return byDate;
+}
+
+async function renderAdminCalendar() {
+  const box   = document.getElementById('admin-cal-box');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const states = await getMonthDayStates(adminCalYear, adminCalMonth);
+
+  const firstDow    = new Date(adminCalYear, adminCalMonth, 1).getDay();
+  const daysInMonth = new Date(adminCalYear, adminCalMonth + 1, 0).getDate();
+
+  let html = `
+    <div class="cal-header">
+      <button class="cal-nav" id="admin-cal-prev">›</button>
+      <h4>${HE_MONTHS[adminCalMonth]} ${adminCalYear}</h4>
+      <button class="cal-nav" id="admin-cal-next">‹</button>
+    </div>
+    <div class="cal-grid">
+      ${HE_DAY_NAMES.map(d => `<div class="cal-day-name">${d}</div>`).join('')}`;
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-day empty"></div>';
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(adminCalYear, adminCalMonth, day);
+    const dateStr = `${adminCalYear}-${pad(adminCalMonth + 1)}-${pad(day)}`;
+    const isPast = d < today;
+    const info = states.get(dateStr);
+    let cls = 'cal-day';
+    if (isPast) cls += ' past';
+    else cls += ' friday-avail';                 // any non-past day is selectable
+    if (dateStr === adminSelDate) cls += ' selected';
+    if (info && info.closed) cls += ' is-closed';
+    else if (effectiveOpen(dateStr, info).length) cls += ' has-windows';
+    html += `<div class="${cls}" ${isPast ? '' : `data-date="${dateStr}"`}>${day}</div>`;
+  }
+  html += '</div>';
+  box.innerHTML = html;
+
+  document.getElementById('admin-cal-prev').addEventListener('click', () => {
+    adminCalMonth--; if (adminCalMonth < 0) { adminCalMonth = 11; adminCalYear--; } renderAdminCalendar();
+  });
+  document.getElementById('admin-cal-next').addEventListener('click', () => {
+    adminCalMonth++; if (adminCalMonth > 11) { adminCalMonth = 0; adminCalYear++; } renderAdminCalendar();
+  });
+  box.querySelectorAll('.cal-day[data-date]').forEach(c =>
+    c.addEventListener('click', () => selectAdminDate(c.dataset.date)));
+}
+
+function selectAdminDate(dateStr) {
+  adminSelDate = dateStr;
+  const sel = document.getElementById('avail-selected');
+  if (sel) sel.textContent = `📅 ${dowLabel(dateStr)} · ${fmtDate(dateStr)}`;
+  document.querySelectorAll('#admin-cal-box .cal-day').forEach(c => c.classList.remove('selected'));
+  const cell = document.querySelector(`#admin-cal-box .cal-day[data-date="${dateStr}"]`);
+  if (cell) cell.classList.add('selected');
+  updateAvailPreview();
+  loadDayWindows(dateStr);
+}
+
+// ─── Time selects (hour on the left, minutes on the right) ─────────────────────
+function populateTimeSelects() {
+  const hours = [];
+  for (let h = 6; h <= 23; h++) hours.push(pad(h));
+  const mins = ['00', '15', '30', '45'];
+  document.querySelectorAll('.ts-hour').forEach(sel => {
+    sel.innerHTML = hours.map(h => `<option value="${h}">${h}</option>`).join('');
+  });
+  document.querySelectorAll('.ts-min').forEach(sel => {
+    sel.innerHTML = mins.map(m => `<option value="${m}">${m}</option>`).join('');
+  });
+}
+function getEditorTime(which) {
+  return `${document.getElementById(`${which}-h`).value}:${document.getElementById(`${which}-m`).value}`;
+}
+function setEditorTime(which, hhmm) {
+  const [h, m] = hhmm.split(':');
+  const hs = document.getElementById(`${which}-h`);
+  const ms = document.getElementById(`${which}-m`);
+  if (hs) hs.value = h;
+  if (ms) ms.value = m;
+}
+
+// ─── Data loading ─────────────────────────────────────────────────────────────
+async function loadAppointments() {
+  const { data, error } = await MoriyaAuth.sb
+    .from('appointments')
+    .select('*')
+    .order('date', { ascending: true })
+    .order('start_time', { ascending: true });
+  if (error) { console.warn('loadAppointments:', error.message); dash.appointments = []; return; }
+  dash.appointments = data || [];
+}
+
+async function loadClientsCount() {
+  const { count, error } = await MoriyaAuth.sb
+    .from('profiles')
+    .select('*', { count: 'exact', head: true });
+  dash.clientsCount = error ? 0 : (count || 0);
+}
+
+// ─── KPI cards ────────────────────────────────────────────────────────────────
+function renderKPIs() {
+  const today = todayStr();
+  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+
+  const upcoming = active.filter(a => a.date >= today).length;
+
+  const since = dateStrOffset(-30);
+  const last30 = active.filter(a => a.date >= since && a.date <= today);
+  const revenue30 = last30.reduce((s, a) => s + Number(a.total_price || 0), 0);
+  const workingDays = new Set(last30.map(a => a.date)).size;
+  const avgPerDay = workingDays ? revenue30 / workingDays : 0;
+
+  document.getElementById('kpi-clients').textContent = dash.clientsCount;
+  document.getElementById('kpi-upcoming').textContent = upcoming;
+  document.getElementById('kpi-revenue').textContent = ils(revenue30);
+  document.getElementById('kpi-avg').textContent = ils(avgPerDay);
+}
+
+// ─── Charts ───────────────────────────────────────────────────────────────────
+// Aggregate active appointments by date inside the selected window.
+function aggregateByDay(range) {
+  const from = dateStrOffset(-range);
+  const to = dateStrOffset(range);
+  const map = new Map(); // date -> { revenue, clients }
+  dash.appointments
+    .filter(a => a.status !== 'cancelled' && a.date >= from && a.date <= to)
+    .forEach(a => {
+      const e = map.get(a.date) || { revenue: 0, clients: 0 };
+      e.revenue += Number(a.total_price || 0);
+      e.clients += 1;
+      map.set(a.date, e);
+    });
+  const dates = [...map.keys()].sort();
+  return {
+    labels: dates.map(d => fmtDate(d).slice(0, 5)), // dd/mm
+    revenue: dates.map(d => map.get(d).revenue),
+    clients: dates.map(d => map.get(d).clients),
+    empty: dates.length === 0,
+  };
+}
+
+function renderCharts() {
+  const agg = aggregateByDay(dash.chartRange);
+  const pink = '#e85880', pinkSoft = 'rgba(232,88,128,0.18)', gold = '#c9966c';
+
+  const baseOpts = {
+    responsive: true, maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        backgroundColor: '#fff', titleColor: '#333', bodyColor: '#555',
+        borderColor: pink, borderWidth: 1, padding: 10,
+        titleFont: { family: 'Heebo' }, bodyFont: { family: 'Heebo' },
+      },
+    },
+    scales: {
+      x: { grid: { display: false }, ticks: { font: { family: 'Heebo', size: 11 }, color: '#9e9e9e' } },
+      y: { beginAtZero: true, grid: { color: 'rgba(0,0,0,0.05)' }, ticks: { font: { family: 'Heebo' }, color: '#9e9e9e', precision: 0 } },
+    },
+  };
+
+  drawChart('chart-revenue', {
+    type: 'bar',
+    data: { labels: agg.labels, datasets: [{ label: 'הכנסות', data: agg.revenue, backgroundColor: pinkSoft, borderColor: pink, borderWidth: 1.5, borderRadius: 8, maxBarThickness: 38 }] },
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins, tooltip: { ...baseOpts.plugins.tooltip, callbacks: { label: c => ` ${ils(c.parsed.y)}` } } } },
+  }, agg.empty);
+
+  drawChart('chart-clients', {
+    type: 'bar',
+    data: { labels: agg.labels, datasets: [{ label: 'לקוחות', data: agg.clients, backgroundColor: 'rgba(201,150,108,0.18)', borderColor: gold, borderWidth: 1.5, borderRadius: 8, maxBarThickness: 38 }] },
+    options: { ...baseOpts, plugins: { ...baseOpts.plugins, tooltip: { ...baseOpts.plugins.tooltip, callbacks: { label: c => ` ${c.parsed.y} לקוחות` } } } },
+  }, agg.empty);
+}
+
+function drawChart(canvasId, config, empty) {
+  const canvas = document.getElementById(canvasId);
+  if (!canvas) return;
+  if (dash.charts[canvasId]) { dash.charts[canvasId].destroy(); dash.charts[canvasId] = null; }
+  const wrap = canvas.parentElement;
+  let emptyEl = wrap.querySelector('.chart-empty');
+  if (empty) {
+    canvas.style.display = 'none';
+    if (!emptyEl) {
+      emptyEl = document.createElement('div');
+      emptyEl.className = 'chart-empty';
+      emptyEl.textContent = 'אין עדיין נתונים לתקופה זו';
+      wrap.appendChild(emptyEl);
+    }
+    return;
+  }
+  if (emptyEl) emptyEl.remove();
+  canvas.style.display = 'block';
+  dash.charts[canvasId] = new Chart(canvas.getContext('2d'), config);
+}
+
+// ─── Availability editor ──────────────────────────────────────────────────────
+let editorKind = 'open';
+
+function wireAvailabilityEditor() {
+  document.querySelectorAll('#kind-toggle .kind-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#kind-toggle .kind-btn').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      editorKind = btn.dataset.kind;
+      updateAvailPreview();
+    });
+  });
+
+  ['start-h', 'start-m', 'end-h', 'end-m'].forEach(id =>
+    document.getElementById(id).addEventListener('change', updateAvailPreview));
+  document.getElementById('avail-add').addEventListener('click', addAvailability);
+
+  updateAvailPreview();
+}
+
+function updateAvailPreview() {
+  const preview = document.getElementById('avail-preview');
+  const start = toMin(getEditorTime('start'));
+  const end = toMin(getEditorTime('end'));
+  if (end <= start) { preview.textContent = '⚠ שעת הסיום חייבת להיות אחרי שעת ההתחלה'; preview.className = 'avail-preview warn'; return; }
+
+  if (editorKind === 'block') {
+    preview.className = 'avail-preview';
+    preview.textContent = `⛔ ייחסם הזמן ${fromMin(start)}–${fromMin(end)} (לא יוצעו בו תורים).`;
+    return;
+  }
+
+  // Account for breaks already defined on the selected day.
+  const slots = sliceSlots(start, end, dashDayBlocks);
+  preview.className = 'avail-preview';
+  if (slots.length === 0) {
+    preview.textContent = 'החלון קצר מ-90 דקות — לא ייווצר אף תור.';
+    return;
+  }
+  let txt = `🟢 ייווצרו ${slots.length} תורים: ${slots.map(fromMin).join(' · ')}`;
+  if (dashDayBlocks.length) txt += ' (מתחשב בהפסקות הקיימות)';
+  preview.textContent = txt;
+}
+
+// Start times for 90-min appointments inside [start, end), skipping past breaks.
+// After a break the 90-min cadence resumes from the break's end.
+function sliceSlots(start, end, breaks) {
+  const bks = (breaks || []).filter(b => b.end > start && b.start < end).sort((a, b) => a.start - b.start);
+  const out = [];
+  let cursor = start;
+  while (cursor + SLOT_LEN <= end) {
+    const hit = bks.find(b => cursor < b.end && cursor + SLOT_LEN > b.start);
+    if (hit) { cursor = hit.end; continue; }   // jump past the break, then resume cadence
+    out.push(cursor);
+    cursor += SLOT_LEN;
+  }
+  return out;
+}
+
+async function addAvailability() {
+  const date = adminSelDate;
+  const start = getEditorTime('start');
+  const end = getEditorTime('end');
+  const fb = document.getElementById('avail-feedback');
+
+  if (!date) { fb.textContent = 'בחרי תאריך מהלוח'; fb.className = 'avail-feedback err'; return; }
+  if (toMin(end) <= toMin(start)) { fb.textContent = 'שעת הסיום חייבת להיות אחרי ההתחלה'; fb.className = 'avail-feedback err'; return; }
+
+  const btn = document.getElementById('avail-add');
+  btn.disabled = true; btn.textContent = 'מוסיפה…';
+
+  // Opening hours on a day that was marked closed should re-open it first.
+  if (editorKind === 'open') {
+    await MoriyaAuth.sb.from('availability').delete().eq('date', date).eq('kind', 'closed');
+  }
+  const { error } = await MoriyaAuth.sb.from('availability').insert({
+    date, start_time: start, end_time: end, kind: editorKind,
+  });
+
+  btn.disabled = false; btn.textContent = 'הוספה ליום';
+  if (error) { fb.textContent = 'שגיאה: ' + error.message; fb.className = 'avail-feedback err'; return; }
+  fb.textContent = '✓ נוסף בהצלחה'; fb.className = 'avail-feedback ok';
+  loadDayWindows(date);
+  renderAdminCalendar();   // refresh the day markers
+}
+
+async function loadDayWindows(date) {
+  const title = document.getElementById('avail-day-title');
+  const list  = document.getElementById('avail-windows');
+  const delDayBtn = document.getElementById('avail-del-day');
+  if (!date) { title.textContent = 'בחרי תאריך לצפייה'; list.innerHTML = ''; delDayBtn.style.display = 'none'; return; }
+  title.textContent = `${dowLabel(date)} · ${fmtDate(date)}`;
+  list.innerHTML = '<div class="slots-loading"><div class="spinner"></div></div>';
+
+  const { data, error } = await MoriyaAuth.sb
+    .from('availability')
+    .select('*')
+    .eq('date', date)
+    .order('start_time', { ascending: true });
+
+  if (error) { list.innerHTML = '<p class="avail-empty">שגיאה בטעינה</p>'; delDayBtn.style.display = 'none'; return; }
+
+  dashDayRows   = data || [];
+  const closed   = dashDayRows.some(r => r.kind === 'closed');
+  const openRows = dashDayRows.filter(r => r.kind === 'open');
+  const blockRows = dashDayRows.filter(r => r.kind === 'block');
+  dashDayBlocks = blockRows.map(w => ({ start: toMin(w.start_time.slice(0, 5)), end: toMin(w.end_time.slice(0, 5)) }));
+  updateAvailPreview();   // preview now reflects this day's breaks
+
+  // Day explicitly marked closed.
+  if (closed) {
+    list.innerHTML = `<div class="day-closed">🚫 היום הזה סגור — לא מוצעים בו תורים.</div>
+      <button class="admin-btn ghost full" id="reopen-day">↩ החזירי שעות עבודה</button>`;
+    document.getElementById('reopen-day').onclick = () => reopenDay(date);
+    delDayBtn.style.display = 'none';
+    return;
+  }
+
+  // Effective work windows: explicit rows, or the Friday default (09:00–17:00).
+  const usingDefault = openRows.length === 0 && isFridayStr(date);
+  const openWins = openRows.length
+    ? openRows.map(r => ({ id: r.id, s: toMin(r.start_time.slice(0, 5)), e: toMin(r.end_time.slice(0, 5)), range: `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}` }))
+    : (usingDefault ? [{ id: null, s: 9 * 60, e: 17 * 60, range: '09:00–17:00' }] : []);
+
+  if (!openWins.length && !blockRows.length) {
+    list.innerHTML = '<p class="avail-empty">אין שעות עבודה ליום זה.<br/>הוסיפי חלון עבודה כדי לפתוח תורים.</p>';
+    delDayBtn.style.display = 'none';
+    return;
+  }
+
+  let rowsHtml = openWins.map(w => {
+    const slots = sliceSlots(w.s, w.e, dashDayBlocks);
+    const slotsTxt = slots.length ? slots.map(fromMin).join(' · ') : 'אין תורים (חלון קצר מדי)';
+    const defLabel = w.id ? '' : ' <span class="win-default">ברירת מחדל (שישי)</span>';
+    const delBtn = w.id ? `<button class="win-del" data-id="${w.id}">מחיקה</button>` : '';
+    return `<div class="avail-win open">
+      <div class="win-info">
+        <span class="win-badge open">🟢 עבודה</span><strong>${w.range}</strong>${defLabel}
+        <span class="win-slots">${slots.length} תורים: ${slotsTxt}</span>
+      </div>
+      ${delBtn}
+    </div>`;
+  }).join('');
+
+  rowsHtml += blockRows.map(r => {
+    const range = `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}`;
+    return `<div class="avail-win block">
+      <div class="win-info"><span class="win-badge block">⛔ הפסקה</span><strong>${range}</strong></div>
+      <button class="win-del" data-id="${r.id}">מחיקה</button>
+    </div>`;
+  }).join('');
+
+  list.innerHTML = rowsHtml;
+  delDayBtn.style.display = openWins.length ? '' : 'none';
+  delDayBtn.onclick = () => deleteDay(date);
+  list.querySelectorAll('.win-del').forEach(b =>
+    b.addEventListener('click', () => deleteWindow(b.dataset.id, date)));
+}
+
+// Appointments (non-cancelled) on `date` overlapping [sMin, eMin) minutes.
+function apptsInRange(date, sMin, eMin) {
+  return dash.appointments.filter(a => {
+    if (a.status === 'cancelled' || a.date !== date) return false;
+    const st = toMin(a.start_time.slice(0, 5));
+    const en = st + (a.duration_min || 0);
+    return st < eMin && en > sMin;
+  });
+}
+
+// Warn the admin before removing availability that already has bookings.
+function confirmConflict(conflicts, action) {
+  const lines = conflicts
+    .map(a => `• ${a.client_name} — ${a.start_time.slice(0, 5)} (${a.duration_min} דק')`)
+    .join('\n');
+  return confirm(`⚠ שימי לב! ללקוחות הבאות כבר נקבע תור בשעות אלו:\n${lines}\n\n${action} בכל זאת? התורים עצמם לא יבוטלו אוטומטית.`);
+}
+
+async function deleteWindow(id, date) {
+  const row = dashDayRows.find(r => String(r.id) === String(id));
+  if (row && row.kind !== 'block') {
+    const s = toMin(row.start_time.slice(0, 5)), e = toMin(row.end_time.slice(0, 5));
+    const conflicts = apptsInRange(date, s, e);
+    if (conflicts.length) {
+      if (!confirmConflict(conflicts, 'למחוק את חלון העבודה')) return;
+    } else if (!confirm('למחוק חלון זה?')) return;
+  } else if (!confirm('למחוק חלון זה?')) return;
+
+  const { error } = await MoriyaAuth.sb.from('availability').delete().eq('id', id);
+  if (error) { alert('שגיאה במחיקה: ' + error.message); return; }
+  loadDayWindows(date);
+  renderAdminCalendar();   // refresh the configured-day markers
+}
+
+async function deleteDay(date) {
+  const conflicts = apptsInRange(date, 0, 24 * 60);
+  if (conflicts.length) {
+    if (!confirmConflict(conflicts, 'לבטל את כל יום העבודה')) return;
+  } else if (!confirm(`לבטל את כל שעות העבודה בתאריך ${fmtDate(date)}?`)) return;
+
+  // Remove any existing windows/breaks for the day.
+  const { error: delErr } = await MoriyaAuth.sb.from('availability').delete().eq('date', date);
+  if (delErr) { alert('שגיאה בביטול היום: ' + delErr.message); return; }
+
+  // Fridays are open by default — record a 'closed' marker so they stay off.
+  if (isFridayStr(date)) {
+    const { error: insErr } = await MoriyaAuth.sb.from('availability')
+      .insert({ date, start_time: '00:00', end_time: '23:59', kind: 'closed' });
+    if (insErr) { alert('שגיאה: ' + insErr.message); return; }
+  }
+  loadDayWindows(date);
+  renderAdminCalendar();
+}
+
+async function reopenDay(date) {
+  const { error } = await MoriyaAuth.sb.from('availability').delete().eq('date', date).eq('kind', 'closed');
+  if (error) { alert('שגיאה: ' + error.message); return; }
+  loadDayWindows(date);
+  renderAdminCalendar();
+}
+
+// ─── Appointments management ──────────────────────────────────────────────────
+function renderAppointments() {
+  const box = document.getElementById('admin-appts');
+  const today = todayStr();
+  let list = dash.appointments.slice();
+  if (dash.apptFilter === 'upcoming') {
+    list = list.filter(a => a.date >= today && a.status !== 'cancelled');
+  }
+  list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
+
+  if (!list.length) {
+    box.innerHTML = '<p class="avail-empty">אין תורים להצגה.</p>';
+    return;
+  }
+
+  const statusLabel = { booked: 'מאושר', done: 'בוצע', cancelled: 'בוטל', no_show: 'לא הגיעה' };
+  box.innerHTML = list.map(a => {
+    const time = (a.start_time || '').slice(0, 5);
+    const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
+    const cancelled = a.status === 'cancelled';
+    const actions = cancelled ? '' : `
+      <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
+      <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
+    return `<div class="admin-appt-card ${cancelled ? 'is-cancelled' : ''}">
+      <div class="aac-main">
+        <div class="aac-when"><strong>📅 ${fmtDate(a.date)}</strong> · ⏰ ${time} <span class="aac-dow">(${dowLabel(a.date)})</span></div>
+        <div class="aac-client">👤 ${a.client_name} · 📞 ${a.client_phone || '—'}</div>
+        <div class="aac-svc">${svc}</div>
+      </div>
+      <div class="aac-side">
+        <span class="aac-price">${ils(Number(a.total_price || 0))}</span>
+        <span class="aac-dur">${a.duration_min} דק'</span>
+        <span class="aac-status st-${a.status}">${statusLabel[a.status] || a.status}</span>
+      </div>
+      <div class="aac-actions">${actions}</div>
+    </div>`;
+  }).join('');
+
+  box.querySelectorAll('.appt-btn.edit').forEach(b =>
+    b.addEventListener('click', () => openReschedule(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.cancel').forEach(b =>
+    b.addEventListener('click', () => adminCancel(b.dataset.id)));
+}
+
+async function adminCancel(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt) return;
+  if (!confirm(`לבטל את התור של ${appt.client_name} בתאריך ${fmtDate(appt.date)}?`)) return;
+
+  // Best-effort calendar sync (works for past appointments too).
+  let calOk = true;
+  try {
+    if (appt.google_event_id) {
+      const accessToken = await getAccessToken();
+      const r = await fetch(`${API_BASE}/api/manage-booking`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ action: 'cancel', eventId: appt.google_event_id, accessToken }),
+      });
+      calOk = r.ok;
+    }
+  } catch (e) { calOk = false; console.warn('calendar cancel failed:', e.message); }
+
+  // Source of truth: mark cancelled in Supabase.
+  const { error } = await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
+  if (error) { alert('הביטול נכשל: ' + error.message); return; }
+  appt.status = 'cancelled';
+  if (!calOk) alert('התור בוטל במערכת, אך ייתכן שלא הוסר מיומן Google — כדאי לבדוק ידנית.');
+
+  renderKPIs(); renderCharts(); renderAppointments();
+}
+
+// ── Reschedule modal ──
+let reschedTarget = null;
+function openReschedule(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt) return;
+  reschedTarget = appt;
+  document.getElementById('resched-sub').textContent =
+    `${appt.client_name} · כעת ${fmtDate(appt.date)} ${appt.start_time.slice(0, 5)}`;
+  document.getElementById('resched-date').value = appt.date;
+  document.getElementById('resched-time').value = appt.start_time.slice(0, 5);
+  document.getElementById('resched-feedback').textContent = '';
+  document.getElementById('resched-modal').style.display = 'flex';
+}
+
+async function saveReschedule() {
+  if (!reschedTarget) return;
+  const date = document.getElementById('resched-date').value;
+  const time = document.getElementById('resched-time').value;
+  const fb = document.getElementById('resched-feedback');
+  if (!date || !time) { fb.textContent = 'יש למלא תאריך ושעה'; fb.className = 'avail-feedback err'; return; }
+
+  const btn = document.getElementById('resched-save');
+  btn.disabled = true; btn.textContent = 'מעדכנת…';
+
+  let calOk = true;
+  try {
+    if (reschedTarget.google_event_id) {
+      const accessToken = await getAccessToken();
+      const r = await fetch(`${API_BASE}/api/manage-booking`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action: 'update', eventId: reschedTarget.google_event_id,
+          date, time, duration: reschedTarget.duration_min, accessToken,
+        }),
+      });
+      calOk = r.ok;
+    }
+  } catch (e) { calOk = false; console.warn('calendar update failed:', e.message); }
+
+  const { error } = await MoriyaAuth.sb.from('appointments')
+    .update({ date, start_time: time }).eq('id', reschedTarget.id);
+
+  btn.disabled = false; btn.textContent = 'שמירה ועדכון יומן';
+  if (error) { fb.textContent = 'העדכון נכשל: ' + error.message; fb.className = 'avail-feedback err'; return; }
+  reschedTarget.date = date; reschedTarget.start_time = time;
+
+  document.getElementById('resched-modal').style.display = 'none';
+  if (!calOk) alert('התור עודכן במערכת, אך ייתכן שלא עודכן ביומן Google — כדאי לבדוק ידנית.');
+  renderKPIs(); renderCharts(); renderAppointments();
+}
+
+// ─── Controls (range tabs, filters, modal) ────────────────────────────────────
+function wireControls() {
+  document.querySelectorAll('#range-tabs .range-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#range-tabs .range-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      dash.chartRange = Number(tab.dataset.range);
+      renderCharts();
+    });
+  });
+
+  document.querySelectorAll('#appt-filters .range-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#appt-filters .range-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      dash.apptFilter = tab.dataset.filter;
+      renderAppointments();
+    });
+  });
+
+  document.getElementById('resched-close').addEventListener('click', () =>
+    document.getElementById('resched-modal').style.display = 'none');
+  document.getElementById('resched-modal').addEventListener('click', e => {
+    if (e.target.id === 'resched-modal') e.target.style.display = 'none';
+  });
+  document.getElementById('resched-save').addEventListener('click', saveReschedule);
+}
+
+// Go.
+bootstrap();

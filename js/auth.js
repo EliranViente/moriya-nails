@@ -68,8 +68,10 @@ function renderAuthUI() {
 
   if (MoriyaAuth.isLoggedIn()) {
     const name = MoriyaAuth.firstName();
-    // Admin dashboard (admin.html) is built in the next phase; link added then.
-    const adminLink = '';
+    // Admins get a quick link to the management dashboard.
+    const adminLink = MoriyaAuth.isAdmin()
+      ? `<a class="nav-admin-link" href="admin.html">📊 ניהול</a>`
+      : '';
     box.innerHTML = `
       ${adminLink}
       <button class="nav-auth-btn myappts" id="btn-myappts">התורים שלי</button>

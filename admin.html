@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ניהול · Moriya Nails</title>
+  <meta name="robots" content="noindex, nofollow" />
+  <link rel="icon" type="image/jpeg" href="images/logo.jpg" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="css/style.css" />
+  <link rel="stylesheet" href="css/admin.css" />
+</head>
+<body class="admin-body">
+
+  <!-- ──────────────── GATE (shown until admin verified) ──────────────── -->
+  <div id="admin-gate" class="admin-gate">
+    <div class="gate-card">
+      <div class="gate-spinner"><div class="spinner"></div></div>
+      <p id="gate-msg">בודקת הרשאות…</p>
+      <div id="gate-actions" class="gate-actions" style="display:none;"></div>
+    </div>
+  </div>
+
+  <!-- ──────────────── DASHBOARD ──────────────── -->
+  <div id="admin-app" class="admin-app" style="display:none;">
+
+    <!-- Topbar -->
+    <header class="admin-topbar">
+      <div class="admin-topbar-inner">
+        <a href="index.html" class="admin-logo">
+          <img src="images/logo-mark.png" alt="Moriya Nails" />
+          <span>לוח ניהול</span>
+        </a>
+        <div class="admin-topbar-right">
+          <span class="admin-who" id="admin-who"></span>
+          <a href="index.html" class="admin-btn ghost">← לאתר</a>
+          <button class="admin-btn ghost" id="admin-logout">התנתקות</button>
+        </div>
+      </div>
+    </header>
+
+    <main class="admin-main">
+
+      <!-- ── KPI cards ── -->
+      <section class="kpi-grid" id="kpi-grid">
+        <div class="kpi-card">
+          <div class="kpi-icon">👥</div>
+          <div class="kpi-body"><span class="kpi-value" id="kpi-clients">—</span><span class="kpi-label">לקוחות רשומות</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon">📅</div>
+          <div class="kpi-body"><span class="kpi-value" id="kpi-upcoming">—</span><span class="kpi-label">תורים עתידיים</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon">💰</div>
+          <div class="kpi-body"><span class="kpi-value" id="kpi-revenue">—</span><span class="kpi-label">הכנסות (30 ימים)</span></div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-icon">📈</div>
+          <div class="kpi-body"><span class="kpi-value" id="kpi-avg">—</span><span class="kpi-label">ממוצע ליום עבודה</span></div>
+        </div>
+      </section>
+
+      <!-- ── Charts ── -->
+      <section class="admin-section">
+        <div class="section-head">
+          <h2>נתונים וגרפים</h2>
+          <div class="range-tabs" id="range-tabs">
+            <button class="range-tab" data-range="7">שבוע</button>
+            <button class="range-tab active" data-range="30">30 ימים</button>
+            <button class="range-tab" data-range="90">90 ימים</button>
+            <button class="range-tab" data-range="180">חצי שנה</button>
+            <button class="range-tab" data-range="365">שנה</button>
+          </div>
+        </div>
+        <div class="charts-grid">
+          <div class="chart-card">
+            <h3>הכנסות לכל יום עבודה</h3>
+            <div class="chart-wrap"><canvas id="chart-revenue"></canvas></div>
+          </div>
+          <div class="chart-card">
+            <h3>לקוחות לכל יום עבודה</h3>
+            <div class="chart-wrap"><canvas id="chart-clients"></canvas></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Availability manager ── -->
+      <section class="admin-section">
+        <div class="section-head">
+          <h2>שעות עבודה</h2>
+          <p class="section-hint">פתחי חלון עבודה — נחלק אותו אוטומטית לתורים של 90 דקות. אפשר להוסיף הפסקות או לחסום שעות.</p>
+        </div>
+
+        <div class="avail-layout">
+          <!-- Editor (right) -->
+          <div class="avail-editor">
+            <div class="avail-selected" id="avail-selected">בחרי תאריך מהלוח →</div>
+
+            <div class="field-row">
+              <label class="field">
+                <span>משעה</span>
+                <div class="time-select" dir="ltr">
+                  <select class="ts-hour" id="start-h" aria-label="שעת התחלה"></select>
+                  <span class="ts-colon">:</span>
+                  <select class="ts-min" id="start-m" aria-label="דקות התחלה"></select>
+                </div>
+              </label>
+              <label class="field">
+                <span>עד שעה</span>
+                <div class="time-select" dir="ltr">
+                  <select class="ts-hour" id="end-h" aria-label="שעת סיום"></select>
+                  <span class="ts-colon">:</span>
+                  <select class="ts-min" id="end-m" aria-label="דקות סיום"></select>
+                </div>
+              </label>
+            </div>
+
+            <div class="kind-toggle" id="kind-toggle">
+              <button type="button" class="kind-btn active" data-kind="open">🟢 חלון עבודה</button>
+              <button type="button" class="kind-btn" data-kind="block">⛔ הפסקה / חסימה</button>
+            </div>
+
+            <p class="avail-preview" id="avail-preview"></p>
+            <p class="avail-feedback" id="avail-feedback"></p>
+
+            <button class="admin-btn primary full" id="avail-add">הוספה ליום</button>
+          </div>
+
+          <!-- Calendar (center) -->
+          <div class="avail-cal">
+            <div class="calendar-box" id="admin-cal-box"></div>
+            <p class="cal-legend"><span class="cal-legend-dot"></span> ימים עם שעות עבודה מוגדרות</p>
+          </div>
+
+          <!-- Selected day's hours (left) -->
+          <div class="avail-day">
+            <div class="avail-day-head">
+              <h3 id="avail-day-title">בחרי תאריך לצפייה</h3>
+              <button class="day-del-all" id="avail-del-day" style="display:none;">בטלי יום</button>
+            </div>
+            <div class="avail-windows" id="avail-windows"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ── Appointments manager ── -->
+      <section class="admin-section">
+        <div class="section-head">
+          <h2>ניהול תורים</h2>
+          <div class="appt-filters" id="appt-filters">
+            <button class="range-tab active" data-filter="upcoming">עתידיים</button>
+            <button class="range-tab" data-filter="all">הכל</button>
+          </div>
+        </div>
+        <div class="admin-appts" id="admin-appts">
+          <div class="slots-loading"><div class="spinner"></div><span>טוענת תורים…</span></div>
+        </div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ──────────────── RESCHEDULE MODAL ──────────────── -->
+  <div class="modal-overlay" id="resched-modal" style="display:none;">
+    <div class="modal-card">
+      <button class="modal-close" id="resched-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title">הזזת תור</h3>
+      <p class="modal-sub" id="resched-sub"></p>
+      <div class="field-row">
+        <label class="field"><span>תאריך חדש</span><input type="date" id="resched-date" /></label>
+        <label class="field"><span>שעה חדשה</span><input type="time" id="resched-time" step="900" /></label>
+      </div>
+      <p class="avail-feedback" id="resched-feedback"></p>
+      <button class="admin-btn primary full" id="resched-save">שמירה ועדכון יומן</button>
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <script src="js/auth.js"></script>
+  <script src="js/admin.js"></script>
+</body>
+</html>

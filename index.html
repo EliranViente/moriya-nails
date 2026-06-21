@@ -372,7 +372,7 @@
         <!-- ── STEP 2: Date & Time ── -->
         <div class="booking-step" id="step-2" style="display:none;">
           <h3 class="step-title">בחרי תאריך ושעה</h3>
-          <p class="step-hint">📅 תורים זמינים בימי שישי בלבד, 09:00–17:00</p>
+          <p class="step-hint">📅 בחרי יום פתוח להזמנה ושעה פנויה</p>
 
           <div class="cal-time-wrap">
             <div class="calendar-box" id="calendar-box">
@@ -414,29 +414,6 @@
                 <input type="tel" id="f-phone" placeholder="050-0000000" required />
               </div>
             </div>
-
-            <!-- Phone verification (WhatsApp one-time code) -->
-            <div class="verify-block" id="verify-block">
-              <div class="verify-verified" id="verify-verified" style="display:none;">
-                <span class="verify-check">✓</span> הטלפון שלך מאומת
-              </div>
-              <div class="verify-pending" id="verify-pending">
-                <p class="verify-hint">לשריון התור נשלח קוד אימות חד-פעמי לוואטסאפ שלך 💬</p>
-                <button type="button" class="btn-verify-send" id="btn-send-code">שלחי לי קוד אימות</button>
-
-                <div class="verify-code-row" id="code-block" style="display:none;">
-                  <label for="f-code">הקוד שקיבלת בוואטסאפ</label>
-                  <div class="verify-code-controls">
-                    <input type="text" inputmode="numeric" maxlength="6" id="f-code"
-                           placeholder="------" autocomplete="one-time-code" />
-                    <button type="button" class="btn-verify-check" id="btn-verify-code">אימות ✓</button>
-                  </div>
-                  <button type="button" class="btn-verify-resend" id="btn-resend-code">שליחה חוזרת של הקוד</button>
-                </div>
-                <p class="verify-msg" id="verify-msg"></p>
-              </div>
-            </div>
-
             <div class="form-group">
               <label for="f-notes">הערות (רשות)</label>
               <textarea id="f-notes" placeholder="יש משהו שחשוב לך שנדע?"></textarea>
@@ -447,9 +424,22 @@
               <!-- Filled by JS -->
             </div>
 
+            <!-- Treatment policies consent -->
+            <div class="policy-consent" id="policy-consent">
+              <label class="policy-check-label">
+                <input type="checkbox" id="chk-policy" disabled />
+                <div class="custom-check"></div>
+                <span class="policy-check-text">
+                  קראתי ואני מאשרת את
+                  <button type="button" class="policy-link" id="open-policy">נהלי הטיפול</button>
+                </span>
+              </label>
+              <p class="policy-hint" id="policy-hint">יש לפתוח ולקרוא את נהלי הטיפול כדי לאשר</p>
+            </div>
+
             <div class="step-nav">
               <button type="button" class="btn-back" id="back-step2">→ חזרה</button>
-              <button type="submit" class="btn-confirm" id="btn-confirm-booking">אשרי הזמנה ✓</button>
+              <button type="submit" class="btn-confirm">אשרי הזמנה ✓</button>
             </div>
           </form>
         </div>
@@ -602,6 +592,25 @@
       <h3 class="modal-title">התורים שלי</h3>
       <p class="modal-sub">ניתן לשנות או לבטל תור עד יום לפני מועדו</p>
       <div class="appts-list" id="appts-list"></div>
+    </div>
+  </div>
+
+  <!-- ──────────────── TREATMENT POLICIES MODAL ──────────────── -->
+  <div class="modal-overlay" id="policy-modal" style="display:none;">
+    <div class="modal-card">
+      <button class="modal-close" id="policy-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title">נהלי הטיפול</h3>
+      <p class="modal-sub">אנא קראי בעיון את הנהלים לפני אישור התור</p>
+      <ol class="policy-list">
+        <li>הגעה לטיפול לבד ללא מלווים</li>
+        <li>ביטול או שינוי תור בהודעה שנמסרה פחות מ-24 שעות ממועד התור יחויבו בתשלום מלא של התור שבוטל.</li>
+        <li>איחור מעל 15 דק' יגרור ביטול אוטומטי של התור ותשלום קנס בגינו כאמור לעיל</li>
+        <li>טיפול מתבצע על ציפורן בריאה בלבד כאשר הציפורן אינה בריאה (פטרת/זיהום/אוניכולוזיס) לא תהיה אפשרות להמשיך בטיפול</li>
+        <li>חריות לתיקונים ללא עלות עד 7 ימים אין אחריות על שברים או נזק שנגרם באופן מכוון כגון כסיסה, תלישה, שימוש בחומרים כימיים ללא כפפות</li>
+        <li>על קישוטים יש לעדכן מראש בקביעת התור קישוטים הינם כל תוספת שהיא לא צבע חלק</li>
+        <li>כל טיפול שייעשה כנגד המלצתי המקצועית הינו באחריות הלקוחה בלבד.</li>
+      </ol>
+      <button type="button" class="btn-next" id="policy-agree">קראתי ואני מאשרת ✓</button>
     </div>
   </div>
 

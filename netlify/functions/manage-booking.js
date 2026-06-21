@@ -30,6 +30,9 @@ const SB_URL  = process.env.SUPABASE_URL || '';
 const SB_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const sbReady = Boolean(SB_URL && SB_KEY);
 
+// Admins may cancel / reschedule any appointment from the dashboard.
+const ADMIN_EMAILS = ['eliran.viente@gmail.com', 'moriya681@gmail.com'];
+
 // Resolve the Supabase user behind an access token.
 async function getUserFromToken(accessToken) {
   if (!accessToken || !sbReady) return null;
@@ -41,6 +44,10 @@ async function getUserFromToken(accessToken) {
     const user = await res.json();
     return user && user.id ? user : null;
   } catch { return null; }
+}
+
+function isAdminUser(user) {
+  return Boolean(user && ADMIN_EMAILS.includes((user.email || '').toLowerCase()));
 }
 
 // Does this user own an appointment with the given Google event id?
@@ -74,10 +81,12 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action or eventId' }) };
   }
 
-  // Defense in depth: when Supabase is configured, verify ownership.
+  // Defense in depth: when Supabase is configured, verify the caller is either
+  // the appointment owner or an admin managing it from the dashboard.
   if (sbReady) {
     const user = await getUserFromToken(accessToken);
-    if (!user || !(await userOwnsEvent(user.id, eventId))) {
+    const allowed = user && (isAdminUser(user) || await userOwnsEvent(user.id, eventId));
+    if (!allowed) {
       return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };
     }
   }

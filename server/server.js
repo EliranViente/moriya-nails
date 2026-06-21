@@ -8,7 +8,6 @@ require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
 const { google } = require('googleapis');
-const otp = require('../lib/otp');
 
 const app = express();
 app.use(cors());
@@ -72,112 +71,13 @@ app.get('/api/busy-slots', async (req, res) => {
   }
 });
 
-// ─── POST /api/otp-send ─────────────────────────────────────────────────────
-// Generates a one-time code, stores its hash, and sends it over WhatsApp.
-app.post('/api/otp-send', async (req, res) => {
-  if (!otp.otpConfigured() || !otp.whatsappConfigured()) {
-    return res.status(503).json({ error: 'Verification is not configured yet' });
-  }
-  const phone = otp.normalizePhone(req.body.phone);
-  if (!phone) return res.status(400).json({ error: 'invalid_phone' });
-
-  try {
-    const existing = await otp.getVerification(phone);
-    if (existing) {
-      const since = Date.now() - new Date(existing.last_sent_at).getTime();
-      if (since < otp.RESEND_COOLDOWN_MS) {
-        return res.status(429).json({ error: 'cooldown', retryAfter: Math.ceil((otp.RESEND_COOLDOWN_MS - since) / 1000) });
-      }
-    }
-    const code = otp.generateCode();
-    await otp.upsertVerification({
-      phone,
-      code_hash:    otp.hashCode(code, phone),
-      expires_at:   new Date(Date.now() + otp.CODE_TTL_MS).toISOString(),
-      attempts:     0,
-      last_sent_at: new Date().toISOString(),
-    });
-    await otp.sendWhatsappOtp(phone, code);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('otp-send error:', err.message);
-    res.status(500).json({ error: 'send_failed' });
-  }
-});
-
-// ─── POST /api/otp-verify ───────────────────────────────────────────────────
-// Checks the code; on success returns a verifyToken and (for logged-in users)
-// marks profiles.phone_verified = true.
-app.post('/api/otp-verify', async (req, res) => {
-  if (!otp.otpConfigured()) return res.status(503).json({ error: 'Verification is not configured yet' });
-  const phone = otp.normalizePhone(req.body.phone);
-  const code  = String(req.body.code || '').replace(/\D/g, '');
-  if (!phone) return res.status(400).json({ error: 'invalid_phone' });
-  if (!/^\d{6}$/.test(code)) return res.status(400).json({ error: 'invalid_code' });
-
-  try {
-    const row = await otp.getVerification(phone);
-    if (!row) return res.status(400).json({ error: 'no_code' });
-    if (Date.now() > new Date(row.expires_at).getTime()) {
-      await otp.deleteVerification(phone);
-      return res.status(400).json({ error: 'expired' });
-    }
-    if (row.attempts >= otp.MAX_ATTEMPTS) {
-      await otp.deleteVerification(phone);
-      return res.status(429).json({ error: 'too_many_attempts' });
-    }
-    if (otp.hashCode(code, phone) !== row.code_hash) {
-      await otp.setAttempts(phone, row.attempts + 1);
-      return res.status(400).json({ error: 'wrong_code', remaining: otp.MAX_ATTEMPTS - row.attempts - 1 });
-    }
-    await otp.deleteVerification(phone);
-    if (req.body.accessToken) {
-      const user = await otp.getUserFromToken(req.body.accessToken);
-      if (user) {
-        try { await otp.markProfileVerified(user.id, phone); }
-        catch (e) { console.warn('markProfileVerified failed:', e.message); }
-      }
-    }
-    res.json({ success: true, verifyToken: otp.signToken(phone) });
-  } catch (err) {
-    console.error('otp-verify error:', err.message);
-    res.status(500).json({ error: 'verify_failed' });
-  }
-});
-
-// Confirm the phone behind a booking was actually verified (token or remembered).
-async function isPhoneVerified(phone, verifyToken, accessToken) {
-  if (!otp.otpConfigured()) return true;
-  const canonical = otp.normalizePhone(phone);
-  if (!canonical) return false;
-  if (verifyToken && otp.verifyToken(verifyToken, canonical)) return true;
-  if (accessToken) {
-    const user = await otp.getUserFromToken(accessToken);
-    if (user) {
-      const profile = await otp.getProfile(user.id);
-      if (profile && profile.phone_verified && otp.normalizePhone(profile.phone) === canonical) return true;
-    }
-  }
-  return false;
-}
-
 // ─── POST /api/book ───────────────────────────────────────────────────────────
 // Creates a Google Calendar event for the appointment.
 app.post('/api/book', async (req, res) => {
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes,
-          verifyToken, accessToken } = req.body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes } = req.body;
 
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return res.status(400).json({ error: 'Missing required fields' });
-  }
-
-  try {
-    if (!(await isPhoneVerified(clientPhone, verifyToken, accessToken))) {
-      return res.status(403).json({ error: 'phone_not_verified' });
-    }
-  } catch (err) {
-    console.error('verification check error:', err.message);
-    return res.status(500).json({ error: 'verification_failed' });
   }
 
   try {
@@ -212,6 +112,52 @@ app.post('/api/book', async (req, res) => {
   } catch (err) {
     console.error('book error:', err.message);
     res.status(500).json({ error: 'Failed to create booking', detail: err.message });
+  }
+});
+
+// ─── POST /api/manage-booking ─────────────────────────────────────────────────
+// Local parity with the Netlify function: cancel or reschedule a calendar event.
+// (The local dev server is trusted, so it skips the Supabase ownership check.)
+app.post('/api/manage-booking', async (req, res) => {
+  const { action, eventId, date, time, duration } = req.body;
+  if (!action || !eventId) {
+    return res.status(400).json({ error: 'Missing action or eventId' });
+  }
+
+  try {
+    const auth     = getAuth();
+    const calendar = google.calendar({ version: 'v3', auth });
+
+    if (action === 'cancel') {
+      try {
+        await calendar.events.delete({ calendarId: CALENDAR_ID, eventId });
+      } catch (err) {
+        const code = err.code || (err.response && err.response.status);
+        if (code !== 404 && code !== 410) throw err; // already gone → success
+      }
+      return res.json({ success: true });
+    }
+
+    if (action === 'update') {
+      if (!date || !time) return res.status(400).json({ error: 'Missing date or time' });
+      const [sh, sm]   = time.split(':').map(Number);
+      const dur        = Number(duration) || 0;
+      const endTotal   = sh * 60 + sm + dur;
+      const pad        = n => String(n).padStart(2, '0');
+      const startLocal = `${date}T${time.length === 5 ? time : time.slice(0, 5)}:00`;
+      const endLocal   = `${date}T${pad(Math.floor(endTotal / 60))}:${pad(endTotal % 60)}:00`;
+
+      const patchBody = { start: { dateTime: startLocal, timeZone: TZ } };
+      if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };
+
+      await calendar.events.patch({ calendarId: CALENDAR_ID, eventId, requestBody: patchBody });
+      return res.json({ success: true });
+    }
+
+    return res.status(400).json({ error: 'Unknown action' });
+  } catch (err) {
+    console.error('manage-booking error:', err.message);
+    res.status(500).json({ error: 'calendar_sync_failed', detail: err.message });
   }
 });
 

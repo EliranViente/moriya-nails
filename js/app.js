@@ -25,10 +25,6 @@ const state = {
   clientName:  '',
   clientPhone: '',
   clientNotes: '',
-
-  // Phone verification
-  verifyToken:   null,   // short-lived proof returned by /api/otp-verify
-  verifiedPhone: null,   // normalized phone the token was issued for
 };
 
 // When set, the booking date/time step reschedules this existing appointment
@@ -205,10 +201,71 @@ const HE_MONTHS = [
 ];
 const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 
-function renderCalendar() {
+// ─── Availability (admin-managed) ─────────────────────────────────────────────
+// Per-day model:
+//   • Fridays are work days by default (09:00–17:00) — no DB row needed.
+//   • The admin can add explicit 'open' windows (any day), 'block' breaks, or a
+//     'closed' marker that turns a default Friday off.
+// Effective open windows for a day:
+//   closed → none · explicit open rows → those · else Friday → default · else none.
+// Each open window is sliced into SLOT_LEN-minute appointments, minus breaks.
+const SLOT_LEN = 90; // minutes per bookable appointment slot
+const DEFAULT_FRIDAY_OPEN = [{ start: 9 * 60, end: 17 * 60 }]; // 09:00–17:00
+const padNum   = n => String(n).padStart(2, '0');
+const hhmmToMin = hhmm => { const [h, m] = hhmm.slice(0, 5).split(':').map(Number); return h * 60 + m; };
+const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
+
+const availabilityCache = new Map(); // 'YYYY-M' → Map(date → {open,block,closed})
+
+async function getMonthAvailability(year, month /* 0-based */) {
+  const key = `${year}-${month}`;
+  if (availabilityCache.has(key)) return availabilityCache.get(key);
+
+  const first   = `${year}-${padNum(month + 1)}-01`;
+  const lastNum = new Date(year, month + 1, 0).getDate();
+  const last    = `${year}-${padNum(month + 1)}-${padNum(lastNum)}`;
+
+  const byDate = new Map();
+  try {
+    if (window.MoriyaAuth && MoriyaAuth.sb) {
+      const { data } = await MoriyaAuth.sb
+        .from('availability')
+        .select('date,start_time,end_time,kind')
+        .gte('date', first).lte('date', last);
+      (data || []).forEach(r => {
+        const info = byDate.get(r.date) || { open: [], block: [], closed: false };
+        if (r.kind === 'closed') info.closed = true;
+        else if (r.kind === 'block') info.block.push({ start: hhmmToMin(r.start_time), end: hhmmToMin(r.end_time) });
+        else info.open.push({ start: hhmmToMin(r.start_time), end: hhmmToMin(r.end_time) });
+        byDate.set(r.date, info);
+      });
+    }
+  } catch (e) { /* network/RLS error → defaults still apply (Fridays) */ }
+
+  availabilityCache.set(key, byDate);
+  return byDate;
+}
+
+// The day's effective open windows, applying the Friday default.
+function effectiveOpenWindows(dateStr, info) {
+  if (info && info.closed) return [];
+  if (info && info.open && info.open.length) return info.open;
+  return isFridayStr(dateStr) ? DEFAULT_FRIDAY_OPEN.map(w => ({ ...w })) : [];
+}
+
+async function getDayWindows(dateStr) {
+  const [y, m] = dateStr.split('-').map(Number);
+  const byDate = await getMonthAvailability(y, m - 1);
+  const info   = byDate.get(dateStr) || { open: [], block: [], closed: false };
+  return { open: effectiveOpenWindows(dateStr, info), block: info.block || [] };
+}
+
+async function renderCalendar() {
   const box    = document.getElementById('calendar-box');
   const today  = new Date();
   today.setHours(0, 0, 0, 0);
+
+  const byDate = await getMonthAvailability(calYear, calMonth);
 
   const firstDay = new Date(calYear, calMonth, 1);
   const lastDay  = new Date(calYear, calMonth + 1, 0);
@@ -232,20 +289,24 @@ function renderCalendar() {
 
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(calYear, calMonth, day);
-    const isFriday  = d.getDay() === 5;
     const isPast    = d < today;
-    const dateStr   = `${calYear}-${String(calMonth+1).padStart(2,'0')}-${String(day).padStart(2,'0')}`;
+    const dateStr   = `${calYear}-${padNum(calMonth+1)}-${padNum(day)}`;
     const isSelected = state.selectedDate === dateStr;
 
+    // Bookable when the day has effective open windows (Fridays by default,
+    // any day the admin opened explicitly, unless closed for the day).
+    const dayInfo  = byDate.get(dateStr);
+    const bookable = !isPast && effectiveOpenWindows(dateStr, dayInfo).length > 0;
+
     let cls = 'cal-day';
-    if (!isFriday || isPast) {
+    if (!bookable) {
       cls += isPast ? ' past' : ' not-friday';
     } else {
       cls += ' friday-avail';
       if (isSelected) cls += ' selected';
     }
 
-    const dataAttr = isFriday && !isPast ? `data-date="${dateStr}"` : '';
+    const dataAttr = bookable ? `data-date="${dateStr}"` : '';
     html += `<div class="${cls}" ${dataAttr}>${day}</div>`;
   }
 
@@ -315,39 +376,49 @@ async function loadTimeSlots(dateStr) {
     } catch (e) { /* on error, allow booking */ }
   }
 
-  const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr);
+  const dayWindows = await getDayWindows(dateStr);
+  const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr, dayWindows);
   renderSlots(slots, slotsGrid);
 }
 
-// Slot model:
-//  • Full appointments (> 30 min) use fixed start times.
-//  • Quick fixes (≤ 30 min) open every 10 min, by availability, until 17:30.
-const FIXED_SLOTS     = [9*60, 11*60, 12*60+30, 14*60+15, 15*60+45]; // 9:00,11:00,12:30,14:15,15:45
-const SMALL_THRESHOLD = 30;            // minutes – at/under this is a "quick fix"
-const SMALL_STEP      = 10;            // minutes between quick-fix slots
-const SMALL_START     = 9 * 60;        // 09:00
-const SMALL_END       = 17 * 60 + 30;  // 17:30 (quick fix must finish by then)
+// Slice an open window [ws,we) into appointment start times. Each appointment is
+// durationMin long, spaced SLOT_LEN apart. A break shifts the cadence: the next
+// start resumes from the break's end (so a 10:30–10:45 break makes the next slot
+// 10:45, then 12:15, 13:45 …).
+function sliceWindowWithBreaks(ws, we, breaks, durationMin) {
+  const bks = (breaks || []).filter(b => b.end > ws && b.start < we).sort((a, b) => a.start - b.start);
+  const starts = [];
+  let cursor = ws;
+  while (cursor + durationMin <= we) {
+    const hit = bks.find(b => cursor < b.end && cursor + durationMin > b.start);
+    if (hit) { cursor = hit.end; continue; }   // can't fit before this break → jump past it
+    starts.push(cursor);
+    cursor += SLOT_LEN;                          // 1.5h gap between appointments
+  }
+  return starts;
+}
 
-function buildAvailableSlots(durationMin, busySlots, dateStr) {
+function buildAvailableSlots(durationMin, busySlots, dateStr, dayWindows) {
   const pad      = n => String(n).padStart(2, '0');
   const now      = new Date();
   const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
   const isToday  = dateStr === todayStr;
   const nowMin   = now.getHours() * 60 + now.getMinutes();
 
-  // Choose the candidate start times.
-  let starts;
-  if (durationMin > SMALL_THRESHOLD) {
-    starts = FIXED_SLOTS.slice();
-  } else {
-    starts = [];
-    for (let m = SMALL_START; m + durationMin <= SMALL_END; m += SMALL_STEP) starts.push(m);
-  }
+  const wins   = dayWindows || { open: [], block: [] };
+  const blocks = wins.block || [];
+
+  // 90-min cadence inside each effective open window, shifted by breaks.
+  let starts = [];
+  (wins.open || []).forEach(w => {
+    sliceWindowWithBreaks(w.start, w.end, blocks, durationMin).forEach(m => starts.push(m));
+  });
+  starts = [...new Set(starts)].sort((a, b) => a - b);
 
   return starts.map(m => {
     const endM   = m + durationMin;
-    const busy   = busySlots.some(b => m < b.end && endM > b.start); // overlaps a booking
-    const isPast = isToday && m <= nowMin;                            // already passed
+    const busy   = busySlots.some(b => m < b.end && endM > b.start);   // overlaps a booking
+    const isPast = isToday && m <= nowMin;                              // already passed
     return {
       label: `${pad(Math.floor(m/60))}:${pad(m%60)}`,
       busy: busy || isPast,
@@ -366,6 +437,8 @@ function renderSlots(slots, container) {
       ? 'title="לא ניתן להזמין – נשאר פרק זמן קצר מדי לפני התור"'
       : s.blockedReason === 'past'
       ? 'title="השעה כבר עברה"'
+      : s.blockedReason === 'block'
+      ? 'title="הפסקה – לא מתקבלים תורים בשעה זו"'
       : '';
     return `
     <div class="time-slot ${s.busy ? 'busy' : ''} ${s.blockedReason === 'gap' ? 'gap-blocked' : ''}"
@@ -401,18 +474,19 @@ async function findNearestSlot() {
 
   const d = new Date(today);
   for (let i = 0; i < 70; i++) {                 // search up to ~10 weeks ahead
-    if (d.getDay() === 5) {                       // Fridays only
-      const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
-      if (!bookedDates.has(dateStr)) {
-        let busy = [];
-        try {
-          const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
-          const data = await res.json();
-          busy = data.busySlots || [];
-        } catch (e) { /* treat as free */ }
-        const free = buildAvailableSlots(state.totalTime, busy, dateStr).find(s => !s.busy);
-        if (free) return { date: dateStr, time: free.label };
-      }
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    const wins    = await getDayWindows(dateStr);
+    // Bookable when the day has effective open windows (Fridays by default).
+    const bookable = wins.open.length > 0;
+    if (bookable && !bookedDates.has(dateStr)) {
+      let busy = [];
+      try {
+        const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
+        const data = await res.json();
+        busy = data.busySlots || [];
+      } catch (e) { /* treat as free */ }
+      const free = buildAvailableSlots(state.totalTime, busy, dateStr, wins).find(s => !s.busy);
+      if (free) return { date: dateStr, time: free.label };
     }
     d.setDate(d.getDate() + 1);
   }
@@ -449,7 +523,6 @@ document.getElementById('go-step3')?.addEventListener('click', () => {
   showStep(3);
   renderOrderSummary();
   prefillUserDetails();
-  refreshVerifyUI();
 });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -497,24 +570,8 @@ function prefillUserDetails() {
   if (phoneEl && !phoneEl.value && phone) phoneEl.value = phone;
 }
 
-// ─── Phone verification (WhatsApp one-time code) ───────────────────────────────
-
-// Mirror of the server's normalizePhone so we can compare numbers client-side.
-function normalizePhoneLocal(raw) {
-  if (!raw) return null;
-  let d = String(raw).replace(/[^\d+]/g, '');
-  if (d.startsWith('+')) {
-    d = '+' + d.slice(1).replace(/\D/g, '');
-  } else {
-    d = d.replace(/\D/g, '');
-    if (d.startsWith('00'))      d = '+' + d.slice(2);
-    else if (d.startsWith('0'))  d = '+972' + d.slice(1);
-    else if (d.startsWith('972')) d = '+' + d;
-    else                         d = '+' + d;
-  }
-  return /^\+\d{8,15}$/.test(d) ? d : null;
-}
-
+// Supabase access token of the logged-in user (used to authenticate
+// cancel/reschedule calls to the calendar-sync backend).
 async function getAccessToken() {
   if (!window.MoriyaAuth || !MoriyaAuth.isLoggedIn()) return null;
   try {
@@ -522,184 +579,6 @@ async function getAccessToken() {
     return (data && data.session && data.session.access_token) || null;
   } catch { return null; }
 }
-
-// Is the phone currently typed already verified? Either freshly via OTP this
-// session, or "remembered" on the logged-in user's profile.
-function currentPhoneVerified() {
-  const phone = normalizePhoneLocal(document.getElementById('f-phone')?.value);
-  if (!phone) return false;
-  if (state.verifyToken && state.verifiedPhone === phone) return true;
-  const p = window.MoriyaAuth && MoriyaAuth.profile;
-  if (p && p.phone_verified && normalizePhoneLocal(p.phone) === phone) return true;
-  return false;
-}
-
-// Reflect the verification status in the UI and toggle the confirm button.
-function refreshVerifyUI() {
-  const block    = document.getElementById('verify-block');
-  const verified = document.getElementById('verify-verified');
-  const pending  = document.getElementById('verify-pending');
-  const confirm  = document.getElementById('btn-confirm-booking');
-  if (!block) return;
-
-  const isVerified = currentPhoneVerified();
-  if (verified) verified.style.display = isVerified ? 'flex' : 'none';
-  if (pending)  pending.style.display  = isVerified ? 'none' : 'block';
-  if (confirm)  confirm.disabled = !isVerified;
-}
-
-function setVerifyMsg(text, type) {
-  const el = document.getElementById('verify-msg');
-  if (!el) return;
-  el.textContent = text || '';
-  el.className = 'verify-msg' + (type ? ' ' + type : '');
-}
-
-let resendTimer = null;
-function startResendCooldown(seconds) {
-  const btnSend   = document.getElementById('btn-send-code');
-  const btnResend = document.getElementById('btn-resend-code');
-  let left = seconds;
-  clearInterval(resendTimer);
-  const tick = () => {
-    const label = `שליחה חוזרת (${left})`;
-    [btnSend, btnResend].forEach(b => { if (b) { b.disabled = true; } });
-    if (btnResend) btnResend.textContent = label;
-    if (left <= 0) {
-      clearInterval(resendTimer);
-      resendTimer = null;
-      [btnSend, btnResend].forEach(b => { if (b) b.disabled = false; });
-      if (btnResend) btnResend.textContent = 'שליחה חוזרת של הקוד';
-    }
-    left--;
-  };
-  tick();
-  resendTimer = setInterval(tick, 1000);
-}
-
-async function sendVerificationCode() {
-  const phoneRaw = document.getElementById('f-phone')?.value.trim();
-  const phone    = normalizePhoneLocal(phoneRaw);
-  const phoneEl  = document.getElementById('f-phone');
-  if (!phone) {
-    if (phoneEl) phoneEl.classList.add('error');
-    setVerifyMsg('נא להזין מספר טלפון תקין', 'error');
-    return;
-  }
-  if (phoneEl) phoneEl.classList.remove('error');
-
-  const btnSend = document.getElementById('btn-send-code');
-  if (btnSend) { btnSend.disabled = true; btnSend.textContent = 'שולחת…'; }
-  setVerifyMsg('שולחת קוד לוואטסאפ…', '');
-
-  try {
-    const res  = await fetch(`${API_BASE}/api/otp-send`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: phoneRaw })
-    });
-
-    if (res.status === 503) {
-      // Verification isn't configured on the server yet → allow booking.
-      state.verifyToken   = '__skip__';
-      state.verifiedPhone = phone;
-      refreshVerifyUI();
-      return;
-    }
-
-    const data = await res.json().catch(() => ({}));
-    if (res.ok && data.success) {
-      const codeBlock = document.getElementById('code-block');
-      if (codeBlock) codeBlock.style.display = 'block';
-      document.getElementById('f-code')?.focus();
-      setVerifyMsg('קוד נשלח לוואטסאפ שלך 💬 הזיני אותו כאן', 'success');
-      startResendCooldown(30);
-    } else if (res.status === 429 && data.error === 'cooldown') {
-      setVerifyMsg(`כבר נשלח קוד. נסי שוב בעוד ${data.retryAfter || 30} שניות`, 'error');
-      startResendCooldown(data.retryAfter || 30);
-    } else if (data.error === 'invalid_phone') {
-      setVerifyMsg('מספר הטלפון אינו תקין', 'error');
-    } else {
-      setVerifyMsg('שליחת הקוד נכשלה, נסי שוב', 'error');
-    }
-  } catch (e) {
-    setVerifyMsg('שגיאת רשת בשליחת הקוד', 'error');
-  } finally {
-    // Re-enable the send button only if no cooldown is keeping it disabled.
-    if (btnSend) {
-      btnSend.textContent = 'שלחי לי קוד אימות';
-      if (!resendTimer) btnSend.disabled = false;
-    }
-  }
-}
-
-async function checkVerificationCode() {
-  const phoneRaw = document.getElementById('f-phone')?.value.trim();
-  const phone    = normalizePhoneLocal(phoneRaw);
-  const code     = (document.getElementById('f-code')?.value || '').replace(/\D/g, '');
-  if (!phone) { setVerifyMsg('מספר הטלפון אינו תקין', 'error'); return; }
-  if (!/^\d{6}$/.test(code)) { setVerifyMsg('יש להזין קוד בן 6 ספרות', 'error'); return; }
-
-  const btn = document.getElementById('btn-verify-code');
-  if (btn) { btn.disabled = true; btn.textContent = 'בודקת…'; }
-
-  try {
-    const accessToken = await getAccessToken();
-    const res  = await fetch(`${API_BASE}/api/otp-verify`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ phone: phoneRaw, code, accessToken })
-    });
-    const data = await res.json().catch(() => ({}));
-
-    if (res.ok && data.success) {
-      state.verifyToken   = data.verifyToken;
-      state.verifiedPhone = phone;
-      clearInterval(resendTimer);
-      // Remember on the in-memory profile so a returning customer skips OTP.
-      if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
-        MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { phone_verified: true, phone });
-      }
-      const codeBlock = document.getElementById('code-block');
-      if (codeBlock) codeBlock.style.display = 'none';
-      setVerifyMsg('', '');
-      refreshVerifyUI();
-    } else if (data.error === 'wrong_code') {
-      const left = typeof data.remaining === 'number' ? data.remaining : null;
-      setVerifyMsg(left !== null ? `קוד שגוי. נותרו ${left} ניסיונות` : 'קוד שגוי, נסי שוב', 'error');
-    } else if (data.error === 'expired' || data.error === 'no_code') {
-      setVerifyMsg('הקוד פג תוקף. בקשי קוד חדש', 'error');
-    } else if (data.error === 'too_many_attempts') {
-      setVerifyMsg('יותר מדי ניסיונות. בקשי קוד חדש', 'error');
-    } else {
-      setVerifyMsg('האימות נכשל, נסי שוב', 'error');
-    }
-  } catch (e) {
-    setVerifyMsg('שגיאת רשת באימות הקוד', 'error');
-  } finally {
-    if (btn) { btn.disabled = false; btn.textContent = 'אימות ✓'; }
-  }
-}
-
-document.getElementById('btn-send-code')?.addEventListener('click', sendVerificationCode);
-document.getElementById('btn-resend-code')?.addEventListener('click', sendVerificationCode);
-document.getElementById('btn-verify-code')?.addEventListener('click', checkVerificationCode);
-document.getElementById('f-code')?.addEventListener('keydown', e => {
-  if (e.key === 'Enter') { e.preventDefault(); checkVerificationCode(); }
-});
-
-// Changing the phone invalidates any prior verification for the old number.
-document.getElementById('f-phone')?.addEventListener('input', () => {
-  const phone = normalizePhoneLocal(document.getElementById('f-phone').value);
-  if (state.verifiedPhone && state.verifiedPhone !== phone) {
-    state.verifyToken = null;
-    state.verifiedPhone = null;
-    const codeBlock = document.getElementById('code-block');
-    if (codeBlock) codeBlock.style.display = 'none';
-    setVerifyMsg('', '');
-  }
-  refreshVerifyUI();
-});
 
 document.getElementById('back-step2')?.addEventListener('click', () => showStep(2));
 
@@ -724,14 +603,19 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   } else {
     document.getElementById('f-phone').classList.remove('error');
   }
-  if (!valid) return;
-
-  // Phone must be verified (fresh OTP or remembered on the profile).
-  if (!currentPhoneVerified()) {
-    setVerifyMsg('יש לאמת את מספר הטלפון לפני שריון התור', 'error');
-    refreshVerifyUI();
-    return;
+  // Treatment policies must be opened and confirmed before booking
+  const policyCheck   = document.getElementById('chk-policy');
+  const policyConsent = document.getElementById('policy-consent');
+  if (!policyCheck || !policyCheck.checked) {
+    if (policyConsent) {
+      policyConsent.classList.add('error');
+      policyConsent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    valid = false;
+  } else if (policyConsent) {
+    policyConsent.classList.remove('error');
   }
+  if (!valid) return;
 
   const btn = e.target.querySelector('.btn-confirm');
 
@@ -759,10 +643,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     ...state.addons
   ];
 
-  // 1) Create the Google Calendar event (existing backend).
-  //    Includes verification proof: a fresh OTP token and/or the access
-  //    token of a returning, already-verified user.
-  const accessToken = await getAccessToken();
+  // 1) Create the Google Calendar event (existing backend)
   let googleEventId = null;
   try {
     const res = await fetch(`${API_BASE}/api/book`, {
@@ -776,23 +657,12 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
         clientPhone: phone,
         notes,
         services,
-        totalPrice:  state.totalPrice,
-        verifyToken: state.verifyToken,
-        accessToken
+        totalPrice:  state.totalPrice
       })
     });
     if (res.ok) {
       const data = await res.json().catch(() => ({}));
       googleEventId = data.eventId || null;
-    } else if (res.status === 403) {
-      // Server rejected: verification expired/invalid → ask to re-verify.
-      btn.disabled = false;
-      btn.textContent = 'אשרי הזמנה ✓';
-      state.verifyToken = null;
-      state.verifiedPhone = null;
-      setVerifyMsg('האימות פג. נא לאמת שוב את מספר הטלפון', 'error');
-      refreshVerifyUI();
-      return;
     }
   } catch (err) {
     console.warn('Calendar booking failed (demo mode?):', err.message);
@@ -1011,4 +881,47 @@ document.getElementById('appts-close')?.addEventListener('click', () => {
 });
 document.getElementById('appts-modal')?.addEventListener('click', (e) => {
   if (e.target.id === 'appts-modal') e.target.style.display = 'none';
+});
+
+// ═══════════════════════════════════════════════════════════════════════════════
+//  TREATMENT POLICIES – open, read, confirm
+// ═══════════════════════════════════════════════════════════════════════════════
+function openPolicyModal() {
+  const modal = document.getElementById('policy-modal');
+  if (modal) modal.style.display = 'flex';
+  // The client has now seen the policies → allow ticking the consent checkbox.
+  const chk = document.getElementById('chk-policy');
+  if (chk) chk.disabled = false;
+  const hint = document.getElementById('policy-hint');
+  if (hint) hint.textContent = 'סמני את התיבה כדי לאשר את הנהלים';
+}
+function closePolicyModal() {
+  const modal = document.getElementById('policy-modal');
+  if (modal) modal.style.display = 'none';
+}
+
+document.getElementById('open-policy')?.addEventListener('click', openPolicyModal);
+document.getElementById('policy-close')?.addEventListener('click', closePolicyModal);
+document.getElementById('policy-modal')?.addEventListener('click', (e) => {
+  if (e.target.id === 'policy-modal') closePolicyModal();
+});
+// "I have read and agree" inside the modal ticks the box and closes it.
+document.getElementById('policy-agree')?.addEventListener('click', () => {
+  const chk = document.getElementById('chk-policy');
+  if (chk) { chk.disabled = false; chk.checked = true; }
+  document.getElementById('policy-consent')?.classList.remove('error');
+  const hint = document.getElementById('policy-hint');
+  if (hint) hint.textContent = 'אישרת את נהלי הטיפול ✓';
+  closePolicyModal();
+});
+// Clear the error highlight as soon as the box is ticked.
+document.getElementById('chk-policy')?.addEventListener('change', (e) => {
+  const consent = document.getElementById('policy-consent');
+  const hint    = document.getElementById('policy-hint');
+  if (e.target.checked) {
+    consent?.classList.remove('error');
+    if (hint) hint.textContent = 'אישרת את נהלי הטיפול ✓';
+  } else if (hint) {
+    hint.textContent = 'סמני את התיבה כדי לאשר את הנהלים';
+  }
 });
