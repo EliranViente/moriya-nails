@@ -519,10 +519,30 @@ function apptsInRange(date, sMin, eMin) {
 
 // Warn the admin before removing availability that already has bookings.
 function confirmConflict(conflicts, action) {
-  const lines = conflicts
-    .map(a => `• ${a.client_name} — ${a.start_time.slice(0, 5)} (${a.duration_min} דק')`)
-    .join('\n');
-  return confirm(`⚠ שימי לב! ללקוחות הבאות כבר נקבע תור בשעות אלו:\n${lines}\n\n${action} בכל זאת? התורים עצמם לא יבוטלו אוטומטית.`);
+  const esc = s => String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+  const items = conflicts
+    .map(a => `<li>👤 ${esc(a.client_name)} — ${a.start_time.slice(0, 5)} (${a.duration_min} דק')</li>`)
+    .join('');
+  return confirmDialog({
+    icon:        '⚠️',
+    title:       'שימי לב — יש כבר תורים',
+    message:     `ללקוחות הבאות כבר נקבע תור בשעות אלו. התורים עצמם לא יבוטלו אוטומטית.`,
+    html:        `<ul>${items}</ul>`,
+    confirmText: `${action} בכל זאת`,
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+}
+
+function confirmDeleteWindow() {
+  return confirmDialog({
+    icon:        '🗑️',
+    title:       'למחוק חלון זה?',
+    message:     'החלון יוסר מהיום. אפשר תמיד להוסיף חלון חדש מאוחר יותר.',
+    confirmText: 'כן, מחקי',
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
 }
 
 async function deleteWindow(id, date) {
@@ -531,9 +551,9 @@ async function deleteWindow(id, date) {
     const s = toMin(row.start_time.slice(0, 5)), e = toMin(row.end_time.slice(0, 5));
     const conflicts = apptsInRange(date, s, e);
     if (conflicts.length) {
-      if (!confirmConflict(conflicts, 'למחוק את חלון העבודה')) return;
-    } else if (!confirm('למחוק חלון זה?')) return;
-  } else if (!confirm('למחוק חלון זה?')) return;
+      if (!(await confirmConflict(conflicts, 'למחוק את חלון העבודה'))) return;
+    } else if (!(await confirmDeleteWindow())) return;
+  } else if (!(await confirmDeleteWindow())) return;
 
   const { error } = await MoriyaAuth.sb.from('availability').delete().eq('id', id);
   if (error) { alert('שגיאה במחיקה: ' + error.message); return; }
@@ -544,8 +564,18 @@ async function deleteWindow(id, date) {
 async function deleteDay(date) {
   const conflicts = apptsInRange(date, 0, 24 * 60);
   if (conflicts.length) {
-    if (!confirmConflict(conflicts, 'לבטל את כל יום העבודה')) return;
-  } else if (!confirm(`לבטל את כל שעות העבודה בתאריך ${fmtDate(date)}?`)) return;
+    if (!(await confirmConflict(conflicts, 'לבטל את כל יום העבודה'))) return;
+  } else {
+    const ok = await confirmDialog({
+      icon:        '📅',
+      title:       'ביטול יום עבודה',
+      message:     `כל שעות העבודה בתאריך ${fmtDate(date)} יבוטלו, ולקוחות לא יוכלו לקבוע תור ביום זה.`,
+      confirmText: 'כן, בטלי את היום',
+      cancelText:  'חזרה',
+      tone:        'danger',
+    });
+    if (!ok) return;
+  }
 
   // Remove any existing windows/breaks for the day.
   const { error: delErr } = await MoriyaAuth.sb.from('availability').delete().eq('date', date);
@@ -615,7 +645,15 @@ function renderAppointments() {
 async function adminCancel(id) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
   if (!appt) return;
-  if (!confirm(`לבטל את התור של ${appt.client_name} בתאריך ${fmtDate(appt.date)}?`)) return;
+  const ok = await confirmDialog({
+    icon:        '🗓️',
+    title:       'ביטול תור',
+    message:     `התור של ${appt.client_name} בתאריך ${fmtDate(appt.date)} יבוטל ויוסר מהיומן.`,
+    confirmText: 'כן, בטלי את התור',
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+  if (!ok) return;
 
   // Best-effort calendar sync (works for past appointments too).
   let calOk = true;

@@ -144,6 +144,74 @@ function recalculate() {
   // Can't continue with nothing selected
   const goStep2 = document.getElementById('go-step2');
   if (goStep2) goStep2.disabled = totalTime === 0;
+
+  updateBookingSummary();
+}
+
+// ─── Live appointment summary (under the steps) ───────────────────────────────
+// The current booking step (1–3); used to decide when the summary should show.
+let currentBookingStep = 1;
+
+function summaryTreatmentsLabel() {
+  const parts = [];
+  if (state.baseIncluded) parts.push("מניקור לק ג'ל");
+  state.addons.forEach(a => parts.push(a.name));
+  if (!parts.length) return '';
+  return parts.length <= 2 ? parts.join(' + ') : `${parts[0]} +${parts.length - 1} תוספות`;
+}
+
+// Format a minutes total as a friendly Hebrew duration (e.g. "שעה ורבע", "75 דק'").
+function formatDuration(min) {
+  const h = Math.floor(min / 60), m = min % 60;
+  if (h === 0) return `${m} דק׳`;
+  const hWord = h === 1 ? 'שעה' : h === 2 ? 'שעתיים' : `${h} שעות`;
+  if (m === 0)  return hWord;
+  if (m === 15) return `${hWord} ורבע`;
+  if (m === 30) return `${hWord} וחצי`;
+  if (m === 45) return `${hWord} ושלושת רבעי`;
+  return `${hWord} ו-${m} דק׳`;
+}
+
+function updateBookingSummary() {
+  const bar = document.getElementById('booking-summary');
+  if (!bar) return;
+
+  let treatments, duration, price;
+  if (editingAppointment) {
+    // Rescheduling an existing appointment – reflect its own details.
+    const svc = (editingAppointment.services || []).map(s => s.name);
+    treatments = svc.length
+      ? (svc.length <= 2 ? svc.join(' + ') : `${svc[0]} +${svc.length - 1} תוספות`)
+      : "מניקור לק ג'ל";
+    duration = formatDuration(editingAppointment.duration_min);
+    price    = editingAppointment.total_price + ' ₪';
+  } else {
+    if (!state.totalTime) { bar.style.display = 'none'; return; }
+    // On step 1 stay hidden until the client adds something beyond the default
+    // base manicure; from step 2 onward it always shows.
+    const isDefaultSelection = state.baseIncluded && state.addons.length === 0;
+    if (currentBookingStep === 1 && isDefaultSelection) { bar.style.display = 'none'; return; }
+
+    treatments = summaryTreatmentsLabel() || '—';
+    duration   = formatDuration(state.totalTime);
+    const hasDeco = state.addons.some(a => a.priceLabel);
+    price = state.totalPrice + ' ₪' + (hasDeco ? ' + קישוט' : '');
+  }
+
+  bar.style.display = 'flex';
+  document.getElementById('bs-treatments').textContent = treatments;
+  document.getElementById('bs-duration').textContent   = duration;
+  document.getElementById('bs-price').textContent      = price;
+
+  const whenWrap = document.getElementById('bs-when-wrap');
+  const whenEl   = document.getElementById('bs-when');
+  if (state.selectedDate) {
+    const [, m, d] = state.selectedDate.split('-');
+    whenEl.textContent = state.selectedTime ? `${d}/${m} · ${state.selectedTime}` : `${d}/${m}`;
+    whenWrap.style.display = 'flex';
+  } else {
+    whenWrap.style.display = 'none';
+  }
 }
 
 // Attach listeners
@@ -208,8 +276,13 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 //     'closed' marker that turns a default Friday off.
 // Effective open windows for a day:
 //   closed → none · explicit open rows → those · else Friday → default · else none.
-// Each open window is sliced into SLOT_LEN-minute appointments, minus breaks.
-const SLOT_LEN = 90; // minutes per bookable appointment slot
+// Each open window is sliced into appointments on a grid that depends on the
+// treatment length (90-min standard, 30-min for short treatments), minus breaks.
+const SLOT_LEN = 90; // minutes per bookable appointment slot (standard treatments)
+// Short treatments (under SHORT_TREATMENT_MAX) book on a tighter 30-min grid
+// instead of the 90-min cadence, so quick visits don't waste a full slot.
+const SHORT_SLOT_LEN = 30;
+const SHORT_TREATMENT_MAX = 35; // durations strictly under this use the 30-min grid
 const DEFAULT_FRIDAY_OPEN = [{ start: 9 * 60, end: 17 * 60 }]; // 09:00–17:00
 const padNum   = n => String(n).padStart(2, '0');
 const hhmmToMin = hhmm => { const [h, m] = hhmm.slice(0, 5).split(':').map(Number); return h * 60 + m; };
@@ -329,6 +402,7 @@ async function renderCalendar() {
       state.selectedDate = cell.dataset.date;
       state.selectedTime = null;
       document.getElementById('go-step3').disabled = true;
+      updateBookingSummary();
       renderCalendar();
       loadTimeSlots(state.selectedDate);
     });
@@ -381,11 +455,13 @@ async function loadTimeSlots(dateStr) {
   renderSlots(slots, slotsGrid);
 }
 
-// Slice an open window [ws,we) into appointment start times. Each appointment is
-// durationMin long, spaced SLOT_LEN apart. A break shifts the cadence: the next
-// start resumes from the break's end (so a 10:30–10:45 break makes the next slot
-// 10:45, then 12:15, 13:45 …).
+// Slice an open window [ws,we) into appointment start times. The cadence depends
+// on the treatment length: short treatments (under SHORT_TREATMENT_MAX) book on a
+// 30-min grid, everything else on the 90-min grid. A break shifts the cadence: the
+// next start resumes from the break's end (so a 10:30–10:45 break makes the next
+// slot 10:45, then a full step later …).
 function sliceWindowWithBreaks(ws, we, breaks, durationMin) {
+  const step = durationMin < SHORT_TREATMENT_MAX ? SHORT_SLOT_LEN : SLOT_LEN;
   const bks = (breaks || []).filter(b => b.end > ws && b.start < we).sort((a, b) => a.start - b.start);
   const starts = [];
   let cursor = ws;
@@ -393,7 +469,7 @@ function sliceWindowWithBreaks(ws, we, breaks, durationMin) {
     const hit = bks.find(b => cursor < b.end && cursor + durationMin > b.start);
     if (hit) { cursor = hit.end; continue; }   // can't fit before this break → jump past it
     starts.push(cursor);
-    cursor += SLOT_LEN;                          // 1.5h gap between appointments
+    cursor += step;                             // gap between appointments
   }
   return starts;
 }
@@ -453,6 +529,7 @@ function renderSlots(slots, container) {
       el.classList.add('selected');
       state.selectedTime = el.dataset.time;
       document.getElementById('go-step3').disabled = false;
+      updateBookingSummary();
     });
   });
 }
@@ -710,6 +787,7 @@ function showSuccess(name, phone, notes) {
 
 // ─── Step navigation ──────────────────────────────────────────────────────────
 function showStep(num) {
+  if (typeof num === 'number') currentBookingStep = num;
   ['1','2','3','success'].forEach(id => {
     const el = document.getElementById(`step-${id}`);
     if (el) el.style.display = 'none';
@@ -726,6 +804,13 @@ function showStep(num) {
       if (n <  num)   item.classList.add('done');
     }
   });
+
+  // The live summary follows steps 1–3 but hides on the success screen.
+  const summary = document.getElementById('booking-summary');
+  if (summary) {
+    if (num === 'success') summary.style.display = 'none';
+    else updateBookingSummary();
+  }
 
   // Scroll to booking section smoothly
   const bookingEl = document.getElementById('booking');
@@ -800,7 +885,15 @@ function renderApptsList(appts) {
 }
 
 async function cancelAppointment(id, appts) {
-  if (!confirm('לבטל את התור?')) return;
+  const ok = await confirmDialog({
+    icon:        '🗓️',
+    title:       'לבטל את התור?',
+    message:     'התור יוסר מהיומן שלך. תמיד אפשר לקבוע תור חדש מתי שתרצי 💕',
+    confirmText: 'כן, בטלי את התור',
+    cancelText:  'השאירי את התור',
+    tone:        'danger',
+  });
+  if (!ok) return;
   const appt = (appts || []).find(a => String(a.id) === String(id));
   try {
     // 1) Remove the matching event from Google Calendar.
