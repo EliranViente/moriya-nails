@@ -2087,3 +2087,72 @@ textarea:focus-visible,
 @media (prefers-reduced-motion: reduce) {
   .cdlg-overlay, .cdlg-card { animation: none !important; }
 }
+
+/* ═══════════════════════════════════════════
+   MOBILE OPTIMIZATION LAYER
+   Touch-first refinements layered on top of the rules above
+   (equal specificity, declared last → these win on small screens).
+═══════════════════════════════════════════ */
+
+/* Stop iOS/Android from auto-inflating text in landscape. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+
+/* Use the dynamic viewport unit so the hero fills the screen without
+   jumping when the mobile browser's address bar shows/hides.
+   Browsers that don't understand dvh keep the 100vh rule above. */
+.hero { min-height: 100dvh; }
+
+/* Remove the grey tap flash — we supply our own active states below. */
+a, button, label, .nav-link, .time-slot, .cal-day, .qty-btn,
+.addon-checkbox-label, .service-card, .g-item, .nav-btn, .appt-btn {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* Honour notch / rounded-corner safe areas (needs viewport-fit=cover). */
+.nav-inner {
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+}
+
+@media (max-width: 768px) {
+  /* iOS zooms the whole page when a focused field is < 16px. Pinning form
+     controls to 16px keeps focusing an input from triggering that zoom. */
+  .form-group input,
+  .form-group textarea,
+  .qty-input,
+  .field input { font-size: 16px; }
+
+  /* Tighter vertical rhythm so the page feels app-like, not endless. */
+  .services,
+  .booking-section,
+  .gallery-section,
+  .contact-section { padding: 60px 0; }
+  .about-strip { padding: 48px 0; }
+  .section-header { margin-bottom: 36px; }
+
+  /* Subtle press feedback on the primary tap targets. */
+  .btn-hero:active,
+  .btn-next:active:not(:disabled),
+  .btn-confirm:active,
+  .btn-nearest:active:not(:disabled),
+  .nav-btn:active { transform: scale(0.97); }
+}
+
+@media (max-width: 480px) {
+  .container { padding: 0 16px; }
+  .booking-step { padding: 24px 16px; }
+  .booking-summary { padding: 12px 10px; }
+
+  /* Stack the step nav: full-width primary CTA on top, Back beneath it —
+     both comfortably tappable instead of squeezed side by side. */
+  .step-nav { flex-direction: column-reverse; gap: 10px; }
+  .step-nav .btn-back,
+  .step-nav .btn-next,
+  .step-nav .btn-confirm { width: 100%; }
+
+  /* Roomier modals that use more of the small screen, with momentum scroll. */
+  .modal-card { padding: 26px 18px; max-height: 90dvh; -webkit-overflow-scrolling: touch; }
+  .cdlg-card { padding: 26px 20px 20px; }
+  .cdlg-actions { flex-direction: column-reverse; }
+  .hours-note { padding: 12px 20px; font-size: 0.92rem; }
+}

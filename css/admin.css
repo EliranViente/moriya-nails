@@ -329,3 +329,39 @@
   .admin-main { padding: 20px 16px 60px; }
   .admin-section { padding: 18px; }
 }
+
+/* ── Mobile optimization layer (touch-first, declared last) ── */
+
+/* Dynamic viewport height so the gradient backdrop fills notched screens. */
+.admin-body { min-height: 100dvh; }
+
+/* Sticky topbar respects the notch / rounded corners in landscape. */
+.admin-topbar-inner {
+  padding-left: max(24px, env(safe-area-inset-left));
+  padding-right: max(24px, env(safe-area-inset-right));
+}
+
+@media (max-width: 560px) {
+  /* Compact topbar: smaller logo + buttons so the row never overflows. */
+  .admin-topbar-inner { height: 60px; padding-left: 14px; padding-right: 14px; }
+  .admin-logo img { height: 32px; }
+  .admin-logo span { font-size: 1rem; }
+  .admin-topbar-right { gap: 8px; }
+  .admin-btn { padding: 8px 13px; font-size: 0.85rem; }
+
+  /* Let the availability calendar use the full width once stacked. */
+  .avail-cal { max-width: none; }
+
+  /* Reschedule/appointment action buttons wrap gracefully if cramped. */
+  .aac-actions { flex-wrap: wrap; }
+
+  /* Prevent iOS zoom on the availability time-pickers and any text field. */
+  .time-select select,
+  .field input { font-size: 16px; }
+}
+
+/* Tap feedback + no grey flash on admin controls. */
+.admin-btn, .range-tab, .appt-btn, .kind-btn, .win-del, .day-del-all, .cal-day {
+  -webkit-tap-highlight-color: transparent;
+}
+.admin-btn.primary:active:not(:disabled) { transform: scale(0.98); }
