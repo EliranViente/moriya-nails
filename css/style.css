@@ -1276,15 +1276,182 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   color: var(--gray-600);
   font-size: 1rem;
 }
-.success-details {
+/* ── Confirmation details card ── */
+.success-card {
+  width: 100%;
+  max-width: 440px;
   background: var(--pink-50);
-  border: 1px solid var(--pink-200);
-  border-radius: var(--radius-md);
-  padding: 18px 28px;
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 8px 24px;
   text-align: right;
-  font-size: 0.9rem;
+}
+.success-card-header {
+  font-size: 1.05rem;
+  font-weight: 800;
+  color: var(--pink-500);
+  padding: 16px 0 12px;
+  border-bottom: 1px dashed var(--pink-200);
+  margin-bottom: 4px;
+}
+.success-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--pink-100);
+}
+.success-row:last-child { border-bottom: none; }
+.success-row-icon {
+  font-size: 1.2rem;
+  width: 24px;
+  text-align: center;
+  flex-shrink: 0;
+}
+.success-row-label {
+  color: var(--gray-600);
+  font-size: 0.92rem;
+  flex-shrink: 0;
+}
+.success-row-value {
+  margin-inline-start: auto;
+  text-align: left;
+  font-weight: 700;
+  color: var(--gray-800);
+  font-size: 0.95rem;
+}
+.success-row-treatments { align-items: flex-start; }
+.success-row-treatments .success-row-label { padding-top: 4px; }
+.success-row-value#sc-treatments {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6px;
+}
+.sc-treatment-item {
+  display: inline-block;
+  background: var(--white);
+  border: 1px solid var(--pink-200);
+  border-radius: var(--radius-xl);
+  padding: 4px 12px;
+  font-size: 0.85rem;
   color: var(--gray-700);
-  min-width: 300px;
+  font-weight: 600;
+}
+.success-row-price .success-row-value {
+  color: var(--pink-500);
+  font-size: 1.1rem;
+  font-weight: 800;
+}
+
+/* ── Parking / navigation block ── */
+.success-parking {
+  width: 100%;
+  max-width: 440px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-100);
+  border-radius: var(--radius-lg);
+  padding: 18px 22px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+}
+.success-parking-text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: right;
+}
+.success-parking-title {
+  font-weight: 800;
+  color: var(--gray-800);
+  font-size: 0.98rem;
+}
+.success-parking-addr {
+  color: var(--gray-600);
+  font-size: 0.88rem;
+}
+.success-parking-btns {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+/* The Maps button is white; add a soft border so it reads on the white block. */
+.success-parking-btns .nav-btn { border: 1.5px solid var(--pink-200); }
+.success-parking-btns .nav-btn.waze { border-color: #33ccff; }
+@media (max-width: 480px) {
+  .success-parking { justify-content: center; text-align: center; }
+  .success-parking-text { text-align: center; align-items: center; }
+}
+
+/* ═══════════════════════════════════════════
+   RESCHEDULE MODE (moving an appointment)
+═══════════════════════════════════════════ */
+/* Only the date/time changes, so hide the 1-2-3 treatment/details step bar. */
+.booking-card.reschedule-mode .steps-bar { display: none; }
+
+.reschedule-banner {
+  background: linear-gradient(135deg, #fff5f7 0%, #ffe9f0 100%);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-sm);
+  padding: 20px 22px;
+  margin-bottom: 26px;
+  text-align: right;
+}
+.reschedule-banner .rb-head {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.reschedule-banner .rb-icon {
+  font-size: 2rem;
+  flex-shrink: 0;
+  line-height: 1;
+}
+.reschedule-banner .rb-head-text {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.reschedule-banner .rb-title {
+  font-size: 1.25rem;
+  font-weight: 800;
+  color: var(--gray-800);
+}
+.reschedule-banner .rb-sub {
+  font-size: 0.88rem;
+  color: var(--gray-600);
+  line-height: 1.5;
+}
+.reschedule-banner .rb-current {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 16px;
+  padding: 12px 16px;
+  background: var(--white);
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+}
+.reschedule-banner .rb-current-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  color: var(--pink-500);
+  text-transform: uppercase;
+}
+.reschedule-banner .rb-current-when {
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--gray-800);
+}
+.reschedule-banner .rb-current-svc {
+  font-size: 0.85rem;
+  color: var(--gray-600);
 }
 
 /* ═══════════════════════════════════════════

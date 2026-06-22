@@ -37,7 +37,14 @@ const MoriyaAuth = {
 
   async signOut() {
     await sb.auth.signOut();
-    window.location.reload();
+    // Always land on the public home page logged-out. On admin.html a plain
+    // reload would re-open the gated dashboard with no session (blank screen),
+    // so send every logout back to index.html like any other visitor.
+    const onHome = /(^|\/)index\.html$/.test(window.location.pathname) ||
+                   window.location.pathname === '/' ||
+                   window.location.pathname === '';
+    if (onHome) window.location.reload();
+    else        window.location.href = 'index.html';
   },
 
   async loadProfile() {

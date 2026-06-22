@@ -165,16 +165,23 @@
 
   <!-- ──────────────── RESCHEDULE MODAL ──────────────── -->
   <div class="modal-overlay" id="resched-modal" style="display:none;">
-    <div class="modal-card">
+    <div class="modal-card resched-card">
       <button class="modal-close" id="resched-close" aria-label="סגירה">✕</button>
       <h3 class="modal-title">הזזת תור</h3>
       <p class="modal-sub" id="resched-sub"></p>
-      <div class="field-row">
-        <label class="field"><span>תאריך חדש</span><input type="date" id="resched-date" /></label>
-        <label class="field"><span>שעה חדשה</span><input type="time" id="resched-time" step="900" /></label>
+
+      <div class="resched-current" id="resched-current"></div>
+
+      <div class="resched-picker">
+        <div class="calendar-box" id="resched-cal-box"><!-- rendered by JS --></div>
+        <div class="slots-box" id="resched-slots-box" style="display:none;">
+          <h4>שעות פנויות ביום <span id="resched-date-label"></span></h4>
+          <div class="slots-grid" id="resched-slots-grid"></div>
+        </div>
       </div>
+
       <p class="avail-feedback" id="resched-feedback"></p>
-      <button class="admin-btn primary full" id="resched-save">שמירה ועדכון יומן</button>
+      <button class="admin-btn primary full" id="resched-save" disabled>שמירה ועדכון יומן</button>
     </div>
   </div>
 

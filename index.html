@@ -391,8 +391,24 @@
 
         <!-- ── STEP 2: Date & Time ── -->
         <div class="booking-step" id="step-2" style="display:none;">
-          <h3 class="step-title">בחרי תאריך ושעה</h3>
-          <p class="step-hint">📅 בחרי יום פתוח להזמנה ושעה פנויה</p>
+          <!-- Reschedule context – only shown when moving an existing appointment -->
+          <div class="reschedule-banner" id="reschedule-banner" style="display:none;">
+            <div class="rb-head">
+              <span class="rb-icon">🗓️</span>
+              <div class="rb-head-text">
+                <span class="rb-title">הזזת תור</span>
+                <span class="rb-sub">בחרי מועד חדש — הטיפול, המשך והמחיר נשארים ללא שינוי 💅</span>
+              </div>
+            </div>
+            <div class="rb-current">
+              <span class="rb-current-label">המועד הנוכחי</span>
+              <span class="rb-current-when" id="rb-current-when">—</span>
+              <span class="rb-current-svc" id="rb-current-svc">—</span>
+            </div>
+          </div>
+
+          <h3 class="step-title" id="step2-title">בחרי תאריך ושעה</h3>
+          <p class="step-hint" id="step2-hint">📅 בחרי יום פתוח להזמנה ושעה פנויה</p>
 
           <div class="cal-time-wrap">
             <div class="calendar-box" id="calendar-box">
@@ -469,8 +485,49 @@
           <div class="success-wrap">
             <div class="success-icon">🎉</div>
             <h3>התור נקבע בהצלחה!</h3>
-            <p>ההזמנה נרשמה ביומן של מוריה. נשמח לראות אותך! 💅</p>
-            <div class="success-details" id="success-details"></div>
+            <p id="success-subtitle">ההזמנה נרשמה ביומן של מוריה. נשמח לראות אותך! 💅</p>
+
+            <div class="success-card">
+              <div class="success-card-header">פרטי התור שלך</div>
+
+              <div class="success-row">
+                <span class="success-row-icon">📅</span>
+                <span class="success-row-label">תאריך</span>
+                <span class="success-row-value" id="sc-date"></span>
+              </div>
+              <div class="success-row">
+                <span class="success-row-icon">⏰</span>
+                <span class="success-row-label">שעה</span>
+                <span class="success-row-value" id="sc-time"></span>
+              </div>
+              <div class="success-row success-row-treatments">
+                <span class="success-row-icon">💅</span>
+                <span class="success-row-label">הטיפול</span>
+                <span class="success-row-value" id="sc-treatments"></span>
+              </div>
+              <div class="success-row">
+                <span class="success-row-icon">⏱</span>
+                <span class="success-row-label">משך הטיפול</span>
+                <span class="success-row-value" id="sc-duration"></span>
+              </div>
+              <div class="success-row success-row-price">
+                <span class="success-row-icon">💰</span>
+                <span class="success-row-label">מחיר</span>
+                <span class="success-row-value" id="sc-price"></span>
+              </div>
+            </div>
+
+            <div class="success-parking">
+              <div class="success-parking-text">
+                <span class="success-parking-title">🅿️ הגעה וחניה</span>
+                <span class="success-parking-addr">יעקב בר סימנטוב 18</span>
+              </div>
+              <div class="success-parking-btns">
+                <a href="https://www.google.com/maps/search/?api=1&query=%D7%99%D7%A2%D7%A7%D7%91%20%D7%91%D7%A8%20%D7%A1%D7%99%D7%9E%D7%A0%D7%98%D7%95%D7%91%2018" target="_blank" rel="noopener" class="nav-btn maps">🗺️ Google Maps</a>
+                <a href="https://waze.com/ul?q=%D7%99%D7%A2%D7%A7%D7%91%20%D7%91%D7%A8%20%D7%A1%D7%99%D7%9E%D7%A0%D7%98%D7%95%D7%91%2018&navigate=yes" target="_blank" rel="noopener" class="nav-btn waze">🚗 Waze</a>
+              </div>
+            </div>
+
             <button class="btn-next" onclick="window.location.reload()">קבעי תור נוסף</button>
           </div>
         </div>

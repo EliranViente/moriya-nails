@@ -247,7 +247,7 @@ recalculate(); // initial
 
 // Step 1 → Step 2
 document.getElementById('go-step2').addEventListener('click', () => {
-  editingAppointment = null;                 // fresh booking, not a reschedule
+  exitRescheduleMode();                      // fresh booking, not a reschedule
   state.selectedTime = null;                 // reset – duration may have changed
   const next = document.getElementById('go-step3');
   if (next) { next.textContent = 'המשיכי לפרטים ←'; next.disabled = true; }
@@ -594,7 +594,15 @@ async function goToNearestSlot() {
 
 document.getElementById('btn-nearest')?.addEventListener('click', goToNearestSlot);
 
-document.getElementById('back-step1')?.addEventListener('click', () => showStep(1));
+document.getElementById('back-step1')?.addEventListener('click', () => {
+  // During a reschedule, "back" returns to the appointments list, not step 1.
+  if (editingAppointment) {
+    exitRescheduleMode();
+    openMyAppointments();
+    return;
+  }
+  showStep(1);
+});
 document.getElementById('go-step3')?.addEventListener('click', () => {
   if (editingAppointment) { updateAppointment(); return; }   // reschedule flow
   showStep(3);
@@ -774,15 +782,48 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   showSuccess(name, phone, notes);
 });
 
-function showSuccess(name, phone, notes) {
-  const [y, m, d] = state.selectedDate.split('-');
-  document.getElementById('success-details').innerHTML = `
-    <strong>${name}</strong><br/>
-    📅 ${d}/${m}/${y} ⏰ ${state.selectedTime}<br/>
-    ⏱ ${state.totalTime} דקות &nbsp;|&nbsp; 💰 ${state.totalPrice} ₪<br/>
-    📞 ${phone}
-  `;
+// Format a 'YYYY-MM-DD' date as a friendly Hebrew string, e.g. "יום שישי, 27 ביוני 2026".
+function formatHebrewDate(dateStr) {
+  const dayNames   = ['ראשון', 'שני', 'שלישי', 'רביעי', 'חמישי', 'שישי', 'שבת'];
+  const monthNames = ['ינואר', 'פברואר', 'מרץ', 'אפריל', 'מאי', 'יוני',
+                      'יולי', 'אוגוסט', 'ספטמבר', 'אוקטובר', 'נובמבר', 'דצמבר'];
+  const dt = new Date(`${dateStr}T00:00:00`);
+  return `יום ${dayNames[dt.getDay()]}, ${dt.getDate()} ב${monthNames[dt.getMonth()]} ${dt.getFullYear()}`;
+}
+
+// Fill the confirmation card with appointment details and show the success step.
+function renderSuccessCard({ heading, subtitle, treatments, duration, price }) {
+  const headingEl  = document.querySelector('#step-success h3');
+  const subtitleEl = document.getElementById('success-subtitle');
+  if (headingEl)  headingEl.textContent  = heading;
+  if (subtitleEl) subtitleEl.textContent = subtitle;
+
+  document.getElementById('sc-date').textContent     = formatHebrewDate(state.selectedDate);
+  document.getElementById('sc-time').textContent     = state.selectedTime;
+  document.getElementById('sc-duration').textContent = duration;
+  document.getElementById('sc-price').textContent    = price;
+
+  const treatEl = document.getElementById('sc-treatments');
+  treatEl.innerHTML = treatments.map(t => `<span class="sc-treatment-item">${t}</span>`).join('');
+
   showStep('success');
+}
+
+function showSuccess(name, phone, notes) {
+  const treatments = [
+    ...(state.baseIncluded ? ["מניקור לק ג'ל"] : []),
+    ...state.addons.map(a => a.name)
+  ];
+  if (!treatments.length) treatments.push("מניקור לק ג'ל");
+
+  const hasDeco = state.addons.some(a => a.priceLabel);
+  renderSuccessCard({
+    heading:    'התור נקבע בהצלחה!',
+    subtitle:   'ההזמנה נרשמה ביומן של מוריה. נשמח לראות אותך! 💅',
+    treatments,
+    duration:   formatDuration(state.totalTime),
+    price:      `${state.totalPrice} ₪${hasDeco ? ' + קישוט (ייקבע בתור)' : ''}`
+  });
 }
 
 // ─── Step navigation ──────────────────────────────────────────────────────────
@@ -922,11 +963,45 @@ function startReschedule(id, appts) {
   const modal = document.getElementById('appts-modal');
   if (modal) modal.style.display = 'none';
 
+  // Switch the booking card into reschedule mode: hide the 1-2-3 step bar
+  // (only the date/time changes) and surface the appointment being moved.
+  document.querySelector('.booking-card')?.classList.add('reschedule-mode');
+  const banner = document.getElementById('reschedule-banner');
+  if (banner) {
+    const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
+    document.getElementById('rb-current-when').textContent =
+      `${formatHebrewDate(appt.date)} · ${(appt.start_time || '').slice(0, 5)}`;
+    document.getElementById('rb-current-svc').textContent = svc;
+    banner.style.display = 'block';
+  }
+  const title = document.getElementById('step2-title');
+  const hint  = document.getElementById('step2-hint');
+  if (title) title.textContent = 'בחרי מועד חדש';
+  if (hint)  hint.textContent  = '📅 בחרי יום פתוח ושעה פנויה למועד החדש';
+
   const next = document.getElementById('go-step3');
   if (next) { next.textContent = 'עדכני תור ✓'; next.disabled = true; }
+  const back = document.getElementById('back-step1');
+  if (back) back.textContent = '→ חזרה לתורים שלי';
 
   showStep(2);
   renderCalendar();
+}
+
+// Leave reschedule mode and restore the normal booking UI.
+function exitRescheduleMode() {
+  editingAppointment = null;
+  document.querySelector('.booking-card')?.classList.remove('reschedule-mode');
+  const banner = document.getElementById('reschedule-banner');
+  if (banner) banner.style.display = 'none';
+  const title = document.getElementById('step2-title');
+  const hint  = document.getElementById('step2-hint');
+  if (title) title.textContent = 'בחרי תאריך ושעה';
+  if (hint)  hint.textContent  = '📅 בחרי יום פתוח להזמנה ושעה פנויה';
+  const back = document.getElementById('back-step1');
+  if (back) back.textContent = '→ חזרה';
+  const next = document.getElementById('go-step3');
+  if (next) { next.textContent = 'המשיכי לפרטים ←'; next.disabled = true; }
 }
 
 async function updateAppointment() {
@@ -957,15 +1032,17 @@ async function updateAppointment() {
       .eq('id', editingAppointment.id);
   } catch (e) { console.warn('update failed:', e.message); }
 
-  const [y, m, d] = state.selectedDate.split('-');
-  const details = document.getElementById('success-details');
-  const heading = document.querySelector('#step-success h3');
-  if (heading) heading.textContent = 'התור עודכן בהצלחה!';
-  if (details) details.innerHTML = `📅 ${d}/${m}/${y} ⏰ ${state.selectedTime}`;
+  const svc = (editingAppointment.services || []).map(s => s.name);
+  const treatments = svc.length ? svc : ["מניקור לק ג'ל"];
+  renderSuccessCard({
+    heading:    'התור עודכן בהצלחה!',
+    subtitle:   'המועד החדש נשמר ביומן של מוריה. נתראה! 💅',
+    treatments,
+    duration:   formatDuration(editingAppointment.duration_min),
+    price:      `${editingAppointment.total_price} ₪`
+  });
 
-  editingAppointment = null;
-  if (btn) btn.textContent = 'המשיכי לפרטים ←';
-  showStep('success');
+  exitRescheduleMode();
 }
 
 // Modal close handlers

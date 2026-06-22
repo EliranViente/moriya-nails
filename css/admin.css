@@ -198,8 +198,27 @@
 }
 .ts-colon { color: var(--gray-400); font-weight: 700; }
 
-/* Reschedule modal: keep the native time field hour-left, minutes-right. */
-input[type="time"] { direction: ltr; text-align: left; }
+/* ── Reschedule modal (calendar + time-slot picker, matching the public site) ── */
+.resched-card { max-width: 540px; }
+.resched-current {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  background: var(--pink-50);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  margin-bottom: 20px;
+}
+.resched-current .rc-label {
+  font-size: 0.7rem; font-weight: 700; letter-spacing: 0.04em;
+  text-transform: uppercase; color: var(--pink-500);
+}
+.resched-current .rc-when { font-size: 0.98rem; font-weight: 700; color: var(--gray-800); }
+.resched-current .rc-svc  { font-size: 0.82rem; color: var(--gray-600); }
+.resched-picker { display: flex; flex-direction: column; gap: 18px; margin-bottom: 8px; }
+.resched-picker .calendar-box { width: 100%; }
+.resched-picker .slots-box { margin-top: 0; }
 
 .field { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .field > span { font-size: 0.82rem; font-weight: 600; color: var(--gray-700); }

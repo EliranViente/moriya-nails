@@ -679,24 +679,146 @@ async function adminCancel(id) {
 
 // ── Reschedule modal ──
 let reschedTarget = null;
+let reschedSelDate = null;
+let reschedSelTime = null;
+let reschedCalYear = new Date().getFullYear();
+let reschedCalMonth = new Date().getMonth();
+
 function openReschedule(id) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
   if (!appt) return;
-  reschedTarget = appt;
-  document.getElementById('resched-sub').textContent =
-    `${appt.client_name} · כעת ${fmtDate(appt.date)} ${appt.start_time.slice(0, 5)}`;
-  document.getElementById('resched-date').value = appt.date;
-  document.getElementById('resched-time').value = appt.start_time.slice(0, 5);
+  reschedTarget  = appt;
+  reschedSelDate = appt.date;
+  reschedSelTime = (appt.start_time || '').slice(0, 5);
+  const [Y, M] = appt.date.split('-').map(Number);
+  reschedCalYear  = Y;
+  reschedCalMonth = M - 1;
+
+  const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
+  document.getElementById('resched-sub').textContent = appt.client_name;
+  document.getElementById('resched-current').innerHTML = `
+    <span class="rc-label">המועד הנוכחי</span>
+    <span class="rc-when">📅 ${dowLabel(appt.date)} · ${fmtDate(appt.date)} · ⏰ ${appt.start_time.slice(0, 5)}</span>
+    <span class="rc-svc">${svc} · ${appt.duration_min} דק'</span>`;
   document.getElementById('resched-feedback').textContent = '';
+  document.getElementById('resched-feedback').className = 'avail-feedback';
+
+  renderReschedCalendar().then(() => loadReschedSlots(reschedSelDate));
   document.getElementById('resched-modal').style.display = 'flex';
+}
+
+async function renderReschedCalendar() {
+  const box   = document.getElementById('resched-cal-box');
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  const states = await getMonthDayStates(reschedCalYear, reschedCalMonth);
+
+  const firstDow    = new Date(reschedCalYear, reschedCalMonth, 1).getDay();
+  const daysInMonth = new Date(reschedCalYear, reschedCalMonth + 1, 0).getDate();
+
+  let html = `
+    <div class="cal-header">
+      <button class="cal-nav" id="resched-cal-prev">›</button>
+      <h4>${HE_MONTHS[reschedCalMonth]} ${reschedCalYear}</h4>
+      <button class="cal-nav" id="resched-cal-next">‹</button>
+    </div>
+    <div class="cal-grid">
+      ${HE_DAY_NAMES.map(d => `<div class="cal-day-name">${d}</div>`).join('')}`;
+  for (let i = 0; i < firstDow; i++) html += '<div class="cal-day empty"></div>';
+  for (let day = 1; day <= daysInMonth; day++) {
+    const d = new Date(reschedCalYear, reschedCalMonth, day);
+    const dateStr = `${reschedCalYear}-${pad(reschedCalMonth + 1)}-${pad(day)}`;
+    const isPast  = d < today;
+    const info    = states.get(dateStr);
+    const isOpen  = !isPast && effectiveOpen(dateStr, info).length > 0;
+    let cls = 'cal-day';
+    if (isPast) cls += ' past';
+    if (info && info.closed) cls += ' is-closed';
+    else if (isOpen) cls += ' has-windows friday-avail';
+    if (dateStr === reschedSelDate) cls += ' selected';
+    html += `<div class="${cls}" ${isOpen ? `data-date="${dateStr}"` : ''}>${day}</div>`;
+  }
+  html += '</div>';
+  box.innerHTML = html;
+
+  document.getElementById('resched-cal-prev').addEventListener('click', () => {
+    reschedCalMonth--; if (reschedCalMonth < 0) { reschedCalMonth = 11; reschedCalYear--; } renderReschedCalendar();
+  });
+  document.getElementById('resched-cal-next').addEventListener('click', () => {
+    reschedCalMonth++; if (reschedCalMonth > 11) { reschedCalMonth = 0; reschedCalYear++; } renderReschedCalendar();
+  });
+  box.querySelectorAll('.cal-day[data-date]').forEach(c =>
+    c.addEventListener('click', () => selectReschedDate(c.dataset.date)));
+}
+
+function selectReschedDate(dateStr) {
+  reschedSelDate = dateStr;
+  reschedSelTime = null;
+  document.querySelectorAll('#resched-cal-box .cal-day').forEach(c => c.classList.remove('selected'));
+  document.querySelector(`#resched-cal-box .cal-day[data-date="${dateStr}"]`)?.classList.add('selected');
+  loadReschedSlots(dateStr);
+}
+
+async function loadReschedSlots(dateStr) {
+  const box  = document.getElementById('resched-slots-box');
+  const grid = document.getElementById('resched-slots-grid');
+  const lbl  = document.getElementById('resched-date-label');
+  box.style.display = 'block';
+  lbl.textContent = `${dowLabel(dateStr)} · ${fmtDate(dateStr)}`;
+  grid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות…</span></div>';
+  refreshReschedSave();
+
+  const [Y, M] = dateStr.split('-').map(Number);
+  const states  = await getMonthDayStates(Y, M - 1);
+  const windows = effectiveOpen(dateStr, states.get(dateStr));
+  const duration = reschedTarget.duration_min;
+
+  // Other active appointments on this day (the one being moved doesn't block itself).
+  const busy = dash.appointments
+    .filter(a => a.date === dateStr && a.status !== 'cancelled' && String(a.id) !== String(reschedTarget.id))
+    .map(a => ({ start: toMin(a.start_time.slice(0, 5)), end: toMin(a.start_time.slice(0, 5)) + a.duration_min }));
+
+  const today  = todayStr();
+  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
+
+  const slots = [];
+  windows.forEach(w => {
+    for (let m = w.start; m + duration <= w.end; m += 15) {
+      if (dateStr === today && m <= nowMin) continue;             // no past times today
+      const overlaps = busy.some(b => m < b.end && m + duration > b.start);
+      slots.push({ min: m, label: `${pad(Math.floor(m / 60))}:${pad(m % 60)}`, busy: overlaps });
+    }
+  });
+
+  if (!slots.length) {
+    grid.innerHTML = '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>בחרי יום אחר</div>';
+    return;
+  }
+
+  grid.innerHTML = slots.map(s =>
+    `<div class="time-slot ${s.busy ? 'busy' : ''} ${s.label === reschedSelTime ? 'selected' : ''}" ${s.busy ? '' : `data-time="${s.label}"`}>${s.label}</div>`
+  ).join('');
+  grid.querySelectorAll('.time-slot[data-time]').forEach(c =>
+    c.addEventListener('click', () => selectReschedSlot(c.dataset.time)));
+}
+
+function selectReschedSlot(time) {
+  reschedSelTime = time;
+  document.querySelectorAll('#resched-slots-grid .time-slot').forEach(c => c.classList.remove('selected'));
+  document.querySelector(`#resched-slots-grid .time-slot[data-time="${time}"]`)?.classList.add('selected');
+  refreshReschedSave();
+}
+
+function refreshReschedSave() {
+  const btn = document.getElementById('resched-save');
+  if (btn) btn.disabled = !(reschedSelDate && reschedSelTime);
 }
 
 async function saveReschedule() {
   if (!reschedTarget) return;
-  const date = document.getElementById('resched-date').value;
-  const time = document.getElementById('resched-time').value;
+  const date = reschedSelDate;
+  const time = reschedSelTime;
   const fb = document.getElementById('resched-feedback');
-  if (!date || !time) { fb.textContent = 'יש למלא תאריך ושעה'; fb.className = 'avail-feedback err'; return; }
+  if (!date || !time) { fb.textContent = 'יש לבחור תאריך ושעה'; fb.className = 'avail-feedback err'; return; }
 
   const btn = document.getElementById('resched-save');
   btn.disabled = true; btn.textContent = 'מעדכנת…';
