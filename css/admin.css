@@ -304,6 +304,8 @@
 .appt-btn.edit:hover { background: var(--pink-100); }
 .appt-btn.cancel { color: var(--gray-600); }
 .appt-btn.cancel:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
+.appt-btn.remind { color: #0a8a4a; background: #e8f8ef; border-color: #bfe9d2; }
+.appt-btn.remind:hover { background: #d6f2e2; border-color: #9fe0bd; }
 
 /* ── Responsive ── */
 /* Stack the editor / calendar / day-hours before they get too cramped. */

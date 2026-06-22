@@ -35,6 +35,57 @@ function dowLabel(dateStr) {
 }
 function ils(n) { return Math.round(n).toLocaleString('he-IL') + ' ₪'; }
 
+// ─── WhatsApp reminders ───────────────────────────────────────────────────────
+// Venue details echoed inside the reminder message.
+const VENUE_ADDR = 'יעקב בר סימנטוב 18';
+const VENUE_MAPS = 'https://www.google.com/maps/search/?api=1&query=%D7%99%D7%A2%D7%A7%D7%91%20%D7%91%D7%A8%20%D7%A1%D7%99%D7%9E%D7%A0%D7%98%D7%95%D7%91%2018';
+
+// Normalize an Israeli phone (e.g. "050-123 4567") to WhatsApp's intl form "9725…".
+function waPhone(raw) {
+  const d = String(raw || '').replace(/\D/g, '');
+  if (!d) return '';
+  if (d.startsWith('972')) return d;
+  if (d.startsWith('0')) return '972' + d.slice(1);
+  return '972' + d;
+}
+
+// A warm, on-brand reminder message carrying the appointment's details.
+function reminderText(appt) {
+  const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
+  const time = (appt.start_time || '').slice(0, 5);
+  return [
+    `שלום ${appt.client_name} 💕`,
+    ``,
+    `רק תזכורת קטנה ומתוקה לתור שלך ב-Moriya Nails 💅✨`,
+    ``,
+    `📅 ${dowLabel(appt.date)} · ${fmtDate(appt.date)}`,
+    `⏰ ${time}`,
+    `💆‍♀️ ${svc}`,
+    `⏳ משך משוער: ${appt.duration_min} דק׳`,
+    `💰 לתשלום: ${ils(Number(appt.total_price || 0))}`,
+    ``,
+    `📍 ${VENUE_ADDR}`,
+    `🅿️ הגעה וחניה: ${VENUE_MAPS}`,
+    ``,
+    `מחכות לראות אותך! 🌸 אם משהו משתנה, פשוט עדכני אותי כאן 💗`,
+  ].join('\n');
+}
+
+// Click-to-chat link that opens the admin's own WhatsApp with the message ready.
+function waReminderLink(appt) {
+  const phone = waPhone(appt.client_phone);
+  if (!phone) return '';
+  return `https://wa.me/${phone}?text=${encodeURIComponent(reminderText(appt))}`;
+}
+
+function sendReminder(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt) return;
+  const url = waReminderLink(appt);
+  if (!url) { alert('אין מספר טלפון תקין ללקוחה זו 🙈'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
 async function getAccessToken() {
   try {
     const { data } = await MoriyaAuth.sb.auth.getSession();
@@ -618,7 +669,11 @@ function renderAppointments() {
     const time = (a.start_time || '').slice(0, 5);
     const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
     const cancelled = a.status === 'cancelled';
+    // Reminder only makes sense for an upcoming appointment that has a phone.
+    const canRemind = !cancelled && a.date >= today && a.client_phone;
+    const remindBtn = canRemind ? `<button class="appt-btn remind" data-id="${a.id}">💬 שלחי תזכורת</button>` : '';
     const actions = cancelled ? '' : `
+      ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
       <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
     return `<div class="admin-appt-card ${cancelled ? 'is-cancelled' : ''}">
@@ -636,6 +691,8 @@ function renderAppointments() {
     </div>`;
   }).join('');
 
+  box.querySelectorAll('.appt-btn.remind').forEach(b =>
+    b.addEventListener('click', () => sendReminder(b.dataset.id)));
   box.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
