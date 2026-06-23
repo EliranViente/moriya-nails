@@ -127,9 +127,13 @@
 .chart-card {
   border: 1px solid var(--pink-100); border-radius: var(--radius-md);
   padding: 18px; background: var(--gray-50);
+  min-width: 0; /* let the 1fr column constrain the canvas instead of overflowing */
 }
 .chart-card h3 { font-size: 1rem; font-weight: 700; color: var(--gray-700); margin-bottom: 14px; }
-.chart-wrap { position: relative; height: 260px; }
+.chart-wrap { position: relative; height: 260px; width: 100%; }
+/* Canvas is inline by default → in RTL it parks on the right at its intrinsic
+   px width, looking half-sized. Force it to fill the allocated wrapper. */
+.chart-wrap canvas { display: block; width: 100% !important; height: 100% !important; }
 .chart-empty {
   position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
   color: var(--gray-400); font-size: 0.9rem;
