@@ -140,7 +140,8 @@ const dash = {
   appointments: [],   // all appointments (admin sees everything via RLS)
   clientsCount: 0,
   chartRange: 30,
-  apptFilter: 'upcoming',
+  apptFilter: 'upcoming',   // 'upcoming' | 'all' | 'cancelled'
+  apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
   charts: {},         // Chart.js instances
 };
 
@@ -650,12 +651,37 @@ async function reopenDay(date) {
 }
 
 // ─── Appointments management ──────────────────────────────────────────────────
+// Full Date of an appointment's start, for time-precise window filtering.
+function apptStart(a) {
+  return new Date(`${a.date}T${(a.start_time || '00:00').slice(0, 5)}:00`);
+}
+
+// Narrow upcoming appointments to a relative time window from now.
+// Windows are cumulative: 24h = next 24 hours, week = next 7 days,
+// month = next 30 days. "all" returns the full upcoming list.
+function applyWindowFilter(list) {
+  if (dash.apptWindow === 'all') return list;
+  const DAY = 24 * 60 * 60 * 1000;
+  const now = Date.now();
+  const span = dash.apptWindow === '24h' ? DAY
+             : dash.apptWindow === 'week' ? 7 * DAY
+             : dash.apptWindow === 'month' ? 30 * DAY
+             : Infinity;
+  return list.filter(a => {
+    const t = apptStart(a).getTime();
+    return t >= now && t <= now + span;
+  });
+}
+
 function renderAppointments() {
   const box = document.getElementById('admin-appts');
   const today = todayStr();
   let list = dash.appointments.slice();
   if (dash.apptFilter === 'upcoming') {
     list = list.filter(a => a.date >= today && a.status !== 'cancelled');
+    list = applyWindowFilter(list);
+  } else if (dash.apptFilter === 'cancelled') {
+    list = list.filter(a => a.status === 'cancelled');
   }
   list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
 
@@ -918,11 +944,23 @@ function wireControls() {
     });
   });
 
+  const subfilters = document.getElementById('appt-subfilters');
   document.querySelectorAll('#appt-filters .range-tab').forEach(tab => {
     tab.addEventListener('click', () => {
       document.querySelectorAll('#appt-filters .range-tab').forEach(t => t.classList.remove('active'));
       tab.classList.add('active');
       dash.apptFilter = tab.dataset.filter;
+      // The time-window sub-filters only make sense for the upcoming view.
+      if (subfilters) subfilters.style.display = dash.apptFilter === 'upcoming' ? '' : 'none';
+      renderAppointments();
+    });
+  });
+
+  document.querySelectorAll('#appt-subfilters .range-tab').forEach(tab => {
+    tab.addEventListener('click', () => {
+      document.querySelectorAll('#appt-subfilters .range-tab').forEach(t => t.classList.remove('active'));
+      tab.classList.add('active');
+      dash.apptWindow = tab.dataset.window;
       renderAppointments();
     });
   });

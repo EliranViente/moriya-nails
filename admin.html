@@ -153,7 +153,16 @@
           <div class="appt-filters" id="appt-filters">
             <button class="range-tab active" data-filter="upcoming">עתידיים</button>
             <button class="range-tab" data-filter="all">הכל</button>
+            <button class="range-tab" data-filter="cancelled">בוטלו</button>
           </div>
+        </div>
+        <!-- Time-window sub-filters – shown only under the "upcoming" view -->
+        <div class="appt-subfilters" id="appt-subfilters">
+          <span class="subfilters-label">טווח:</span>
+          <button class="range-tab sub active" data-window="all">הכל</button>
+          <button class="range-tab sub" data-window="24h">24 שעות</button>
+          <button class="range-tab sub" data-window="week">שבוע</button>
+          <button class="range-tab sub" data-window="month">חודש</button>
         </div>
         <div class="admin-appts" id="admin-appts">
           <div class="slots-loading"><div class="spinner"></div><span>טוענת תורים…</span></div>

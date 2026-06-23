@@ -110,6 +110,18 @@
 }
 .range-tab.active { background: var(--white); color: var(--pink-500); box-shadow: var(--shadow-sm); }
 
+/* ── Appointment time-window sub-filters ── */
+.appt-subfilters {
+  display: flex; align-items: center; flex-wrap: wrap; gap: 6px;
+  margin: -8px 0 18px;
+}
+.subfilters-label { font-size: 0.82rem; color: var(--gray-600); font-weight: 600; margin-inline-end: 4px; }
+.range-tab.sub {
+  background: var(--pink-50); color: var(--gray-600);
+  padding: 6px 14px; font-size: 0.82rem;
+}
+.range-tab.sub.active { background: var(--pink-400); color: var(--white); box-shadow: var(--shadow-sm); }
+
 /* ── Charts ── */
 .charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
 .chart-card {
