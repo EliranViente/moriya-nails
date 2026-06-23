@@ -52,7 +52,7 @@ const revealObserver = new IntersectionObserver(entries => {
   entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
 }, { threshold: 0.15 });
 
-document.querySelectorAll('.service-card, .about-card, .contact-card, .g-item, .toolkit-note')
+document.querySelectorAll('.about-card, .contact-card')
   .forEach(el => { el.classList.add('reveal'); revealObserver.observe(el); });
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -75,6 +75,28 @@ function recalculate() {
       if (cb && cb.checked) cb.checked = false;
     }
   });
+
+  // Personal toolkit add-on: selectable only alongside another treatment.
+  // "Another treatment" = the base manicure, any other checked add-on, or any
+  // quantity add-on with a count above zero.
+  let hasOtherTreatment = baseChecked;
+  document.querySelectorAll('.addon-row[data-type="checkbox"]').forEach(row => {
+    if (row.classList.contains('toolkit-row')) return;
+    const cb = row.querySelector('input[type="checkbox"]');
+    if (cb && cb.checked) hasOtherTreatment = true;
+  });
+  document.querySelectorAll('.addon-row[data-type="quantity"] .qty-input').forEach(input => {
+    if ((parseInt(input.value) || 0) > 0) hasOtherTreatment = true;
+  });
+  const toolkitCb   = document.getElementById('chk-toolkit');
+  const toolkitRow  = document.querySelector('.toolkit-row');
+  const toolkitHint = document.getElementById('toolkit-hint');
+  if (toolkitCb) {
+    if (!hasOtherTreatment && toolkitCb.checked) toolkitCb.checked = false;
+    toolkitCb.disabled = !hasOtherTreatment;
+  }
+  if (toolkitRow)  toolkitRow.classList.toggle('disabled', !hasOtherTreatment);
+  if (toolkitHint) toolkitHint.style.display = hasOtherTreatment ? 'none' : 'block';
 
   let totalTime  = baseChecked ? state.baseTime  : 0;
   let totalPrice = baseChecked ? state.basePrice : 0;
