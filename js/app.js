@@ -55,6 +55,39 @@ const revealObserver = new IntersectionObserver(entries => {
 document.querySelectorAll('.about-card, .contact-card')
   .forEach(el => { el.classList.add('reveal'); revealObserver.observe(el); });
 
+// ─── Polish teaser: scroll-driven floating hand ──────────────────────────────
+// A small transparent hand fixed to the bottom-right corner. As the page is
+// scrolled, its nails fill with gel polish: scroll progress 0→1 is written into
+// --p and CSS derives the fill. Non-blocking (only reads scrollY). The whole
+// widget is an <a> to #booking, so clicking navigates there.
+(function initPolishTeaser() {
+  const widget = document.querySelector('.polish-teaser');
+  if (!widget) return;
+  const reduce = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  widget.classList.add('ready');
+  if (reduce) return;                        // CSS shows the finished hand
+
+  let ticking = false;
+
+  function update() {
+    ticking = false;
+    const max = document.documentElement.scrollHeight - window.innerHeight;
+    const p = max > 0 ? Math.min(1, Math.max(0, window.scrollY / max)) : 0;
+    widget.style.setProperty('--p', p.toFixed(4));
+  }
+
+  function onScroll() {
+    if (ticking) return;
+    ticking = true;
+    requestAnimationFrame(update);
+  }
+
+  window.addEventListener('scroll', onScroll, { passive: true });
+  window.addEventListener('resize', onScroll, { passive: true });
+  update();
+})();
+
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STEP 1 – Service Selection
 // ═══════════════════════════════════════════════════════════════════════════════

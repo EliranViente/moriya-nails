@@ -21,3 +21,8 @@
   from = "/api/manage-booking"
   to = "/.netlify/functions/manage-booking"
   status = 200
+
+# ─── Keep-alive: ping Supabase daily so the free-tier project never pauses ───
+# (a paused project stops resolving and breaks login). Runs at 06:00 UTC daily.
+[functions."keepalive"]
+  schedule = "0 6 * * *"

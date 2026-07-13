@@ -14,6 +14,78 @@
 </head>
 <body>
 
+  <!-- ──────────────── SCROLL-DRIVEN GEL TEASER ──────────────── -->
+  <!-- A real (cut-out) hand pinned to the bottom-right corner across the whole
+       page. Two stacked layers: the bare-nail hand, and a pink gel-polish layer
+       that is wiped in from the bottom as the page scrolls (JS writes scroll
+       progress 0→1 into --p; CSS clips the polish). Clicking jumps to booking. -->
+  <a href="#booking" class="polish-teaser" aria-label="לקביעת תור">
+    <svg class="polish-teaser__hand" viewBox="0 0 200 250" role="img" aria-label="יד עם לק ג'ל – לקביעת תור">
+      <defs>
+        <linearGradient id="ptPolish" x1="0" y1="1" x2="0" y2="0">
+          <stop offset="0" stop-color="#e85880" />
+          <stop offset="1" stop-color="#ff9ab5" />
+        </linearGradient>
+        <clipPath id="ptN1"><ellipse cx="71"  cy="87"  rx="9"   ry="11" /></clipPath>
+        <clipPath id="ptN2"><ellipse cx="99"  cy="67"  rx="9"   ry="11" /></clipPath>
+        <clipPath id="ptN3"><ellipse cx="127" cy="87"  rx="9"   ry="11" /></clipPath>
+        <clipPath id="ptN4"><ellipse cx="148" cy="109" rx="7.5" ry="10" /></clipPath>
+        <clipPath id="ptN5"><ellipse cx="55"  cy="123" rx="9"   ry="10" /></clipPath>
+      </defs>
+
+      <!-- hand: palm + wrist + four slim fingers + wider left thumb -->
+      <!-- heights: middle tallest · index=ring equal · pinky shorter · thumb lowest -->
+      <g fill="#f0cbb6">
+        <rect x="76" y="205" width="48" height="45" rx="12" />
+        <ellipse cx="100" cy="172" rx="56" ry="54" />
+        <rect x="61.0"  y="76" width="20" height="116" rx="10" />
+        <rect x="89.0"  y="56" width="20" height="136" rx="10" />
+        <rect x="117.0" y="76" width="20" height="116" rx="10" />
+        <rect x="139.5" y="98" width="17" height="72"  rx="8.5" />
+        <g transform="rotate(-28 62 160)"><rect x="44" y="116" width="22" height="46" rx="11" /></g>
+      </g>
+
+      <!-- subtle knuckle crease lines -->
+      <g fill="none" stroke="#d7a583" stroke-width="1.4" stroke-linecap="round" opacity="0.38">
+        <path d="M 64.2,124.7 Q 71.0,127.7 77.8,124.7" />
+        <path d="M 64.2,152.6 Q 71.0,155.6 77.8,152.6" />
+        <path d="M 92.2,113.1 Q 99.0,116.1 105.8,113.1" />
+        <path d="M 92.2,145.8 Q 99.0,148.8 105.8,145.8" />
+        <path d="M 120.2,124.7 Q 127.0,127.7 133.8,124.7" />
+        <path d="M 120.2,152.6 Q 127.0,155.6 133.8,152.6" />
+        <path d="M 142.2,127.0 Q 148.0,130.0 153.8,127.0" />
+        <path d="M 142.2,147.0 Q 148.0,150.0 153.8,147.0" />
+      </g>
+
+      <!-- natural nail beds -->
+      <g fill="#fdeef0">
+        <ellipse cx="71"  cy="87"  rx="9"   ry="11" />
+        <ellipse cx="99"  cy="67"  rx="9"   ry="11" />
+        <ellipse cx="127" cy="87"  rx="9"   ry="11" />
+        <ellipse cx="148" cy="109" rx="7.5" ry="10" />
+        <g transform="rotate(-28 62 160)"><ellipse cx="55" cy="123" rx="9" ry="10" /></g>
+      </g>
+
+      <!-- gel polish, fills bottom-up per nail (staggered via --start) -->
+      <!-- fill order: pinky (rightmost) → ring → middle → index → thumb, one at a time -->
+      <g clip-path="url(#ptN4)"><rect class="pt-polish" style="--start:0"  x="140.5" y="99" width="15" height="20" fill="url(#ptPolish)" /></g>
+      <g clip-path="url(#ptN3)"><rect class="pt-polish" style="--start:.2" x="118"   y="76" width="18" height="22" fill="url(#ptPolish)" /></g>
+      <g clip-path="url(#ptN2)"><rect class="pt-polish" style="--start:.4" x="90"    y="56" width="18" height="22" fill="url(#ptPolish)" /></g>
+      <g clip-path="url(#ptN1)"><rect class="pt-polish" style="--start:.6" x="62"    y="76" width="18" height="22" fill="url(#ptPolish)" /></g>
+      <g transform="rotate(-28 62 160)"><g clip-path="url(#ptN5)"><rect class="pt-polish" style="--start:.8" x="46" y="113" width="18" height="20" fill="url(#ptPolish)" /></g></g>
+
+      <!-- glossy top-coat highlights (fade in near the end) -->
+      <g class="pt-gloss" fill="#ffffff" opacity="0">
+        <ellipse cx="68"  cy="84"  rx="1.9" ry="4" />
+        <ellipse cx="96"  cy="64"  rx="1.9" ry="4" />
+        <ellipse cx="124" cy="84"  rx="1.9" ry="4" />
+        <ellipse cx="145" cy="106" rx="1.7" ry="3.6" />
+        <g transform="rotate(-28 62 160)"><ellipse cx="52" cy="119" rx="1.7" ry="3.6" /></g>
+      </g>
+    </svg>
+    <span class="polish-teaser__cta">לקביעת תור</span>
+  </a>
+
   <!-- ──────────────── NAVIGATION ──────────────── -->
   <nav id="navbar">
     <div class="nav-inner">

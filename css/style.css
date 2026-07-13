@@ -1630,6 +1630,61 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 }
 
 /* ═══════════════════════════════════════════
+   POLISH TEASER — floating hand, scroll-driven gel fill
+   A small transparent hand fixed to the bottom-right corner across the whole
+   page (no card/background). JS writes scroll progress 0→1 into --p and CSS
+   fills each nail with polish. Clicking it jumps to #booking. Non-blocking —
+   the widget only reads scrollY, it never intercepts the scroll.
+═══════════════════════════════════════════ */
+.polish-teaser {
+  --p: 0;                                    /* scroll progress 0→1, set by JS */
+  position: fixed;
+  right: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  opacity: 0;                                /* faded in by JS once ready */
+  transition: opacity 0.5s ease, transform var(--transition);
+}
+.polish-teaser.ready { opacity: 1; }
+.polish-teaser:hover { transform: translateY(-4px); }
+.polish-teaser__hand {
+  width: clamp(76px, 11vw, 116px);
+  height: auto;
+  filter: drop-shadow(0 8px 16px rgba(0, 0, 0, 0.18));
+}
+/* Nails paint one at a time (pinky → thumb): five 0.2-wide scroll windows,
+   so the last nail finishes exactly at the bottom of the page. */
+.pt-polish {
+  --span: 0.2;
+  transform-box: fill-box;
+  transform-origin: center bottom;
+  transform: scaleY(clamp(0, calc((var(--p) - var(--start)) / var(--span)), 1));
+}
+/* Glossy top-coat highlights fade in as the last nails are painted */
+.pt-gloss { opacity: clamp(0, calc((var(--p) - 0.8) / 0.2), 1); }
+.polish-teaser__cta {
+  padding: 5px 15px;
+  background: linear-gradient(135deg, var(--pink-400), var(--pink-500));
+  color: var(--white);
+  font-size: 0.72rem;
+  font-weight: 700;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+  white-space: nowrap;
+}
+
+@media (max-width: 560px) {
+  .polish-teaser { right: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); gap: 5px; }
+  .polish-teaser__hand { width: 72px; }
+  .polish-teaser__cta { font-size: 0.64rem; padding: 4px 12px; }
+}
+
+/* ═══════════════════════════════════════════
    RESPONSIVE ADJUSTMENTS
 ═══════════════════════════════════════════ */
 @media (max-width: 900px) {
@@ -1688,6 +1743,12 @@ textarea:focus-visible,
     scroll-behavior: auto !important;
   }
   .reveal { opacity: 1; transform: none; }
+
+  /* Polish teaser: no scroll scrubbing — show the finished (painted) hand and
+     keep it visible/clickable as a static booking shortcut. */
+  .polish-teaser { transition: none; opacity: 1; }
+  .pt-polish { transform: scaleY(1) !important; }
+  .pt-gloss { opacity: 1 !important; }
 }
 
 /* ═══════════════════════════════════════════
