@@ -576,7 +576,8 @@ ul { list-style: none; }
   border-right: 3px solid var(--pink-300);
 }
 
-/* Base treatment row */
+/* Base treatment rows (two mutually-exclusive options) */
+.base-treatment-group { margin-bottom: 28px; }
 .base-treatment-row {
   display: flex;
   align-items: center;
@@ -587,6 +588,8 @@ ul { list-style: none; }
   padding: 18px 20px;
   margin-bottom: 28px;
 }
+.base-treatment-group .base-treatment-row { margin-bottom: 14px; }
+.base-treatment-group .base-treatment-row:last-child { margin-bottom: 0; }
 .base-badge {
   background: linear-gradient(135deg, var(--pink-400), var(--pink-500));
   color: var(--white);

@@ -56,7 +56,7 @@ function reminderText(appt) {
   return [
     `שלום ${appt.client_name} 💕`,
     ``,
-    `רק תזכורת קטנה ומתוקה לתור שלך ב-Moriya Nails 💅✨`,
+    `רק תזכורת קטנה לתור שלך ב-Moriya Nails 💅✨`,
     ``,
     `📅 ${dowLabel(appt.date)} · ${fmtDate(appt.date)}`,
     `⏰ ${time}`,
@@ -67,7 +67,7 @@ function reminderText(appt) {
     `📍 ${VENUE_ADDR}`,
     `🅿️ הגעה וחניה: ${VENUE_MAPS}`,
     ``,
-    `מחכות לראות אותך! 🌸 אם משהו משתנה, פשוט עדכני אותי כאן 💗`,
+    `מחכה לראות אותך 💗`,
   ].join('\n');
 }
 

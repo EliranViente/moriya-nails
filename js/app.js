@@ -10,12 +10,13 @@ const API_BASE = window.location.hostname === 'localhost'
 
 // ─── Booking state ───────────────────────────────────────────────────────────
 const state = {
-  // Services
-  baseTime:  75,
-  basePrice: 140,
+  // Services – base treatment defaults to gel polish with anatomic structure.
+  baseName:  "מניקור לק ג'ל עם מבנה אנטומי",
+  baseTime:  90,
+  basePrice: 160,
   addons:    [],   // { name, time, price }
-  totalTime: 75,
-  totalPrice: 140,
+  totalTime: 90,
+  totalPrice: 160,
 
   // Date & time
   selectedDate: null,   // 'YYYY-MM-DD'
@@ -94,11 +95,20 @@ document.querySelectorAll('.about-card, .contact-card')
 
 // Helper: recalculate and display totals
 function recalculate() {
-  // Base manicure is a checkbox now (on by default). Without it = quick fix.
-  const baseChecked = document.getElementById('chk-base')?.checked ?? true;
+  // Two mutually-exclusive base treatments (basic vs. anatomic structure).
+  // Whichever base checkbox is selected defines the base name/time/price;
+  // with none selected there is no base manicure = quick fix.
+  const selectedBase = document.querySelector('.base-treatment-row .base-check:checked')
+    ?.closest('.base-treatment-row');
+  const baseChecked = !!selectedBase;
   state.baseIncluded = baseChecked;
-  const baseRow = document.querySelector('.base-treatment-row');
-  if (baseRow) baseRow.classList.toggle('unchecked', !baseChecked);
+  state.baseName  = selectedBase?.querySelector('.t-name')?.textContent.trim() || '';
+  state.baseTime  = selectedBase ? (parseInt(selectedBase.dataset.time)  || 0) : 0;
+  state.basePrice = selectedBase ? (parseInt(selectedBase.dataset.price) || 0) : 0;
+  document.querySelectorAll('.base-treatment-row').forEach(row => {
+    const cb = row.querySelector('.base-check');
+    row.classList.toggle('unchecked', !(cb && cb.checked));
+  });
 
   // Hide/show addon rows that only apply with the base manicure
   document.querySelectorAll('.addon-row[data-requires-base="true"]').forEach(row => {
@@ -209,7 +219,7 @@ let currentBookingStep = 1;
 
 function summaryTreatmentsLabel() {
   const parts = [];
-  if (state.baseIncluded) parts.push("מניקור לק ג'ל");
+  if (state.baseIncluded) parts.push(state.baseName);
   state.addons.forEach(a => parts.push(a.name));
   if (!parts.length) return '';
   return parts.length <= 2 ? parts.join(' + ') : `${parts[0]} +${parts.length - 1} תוספות`;
@@ -272,6 +282,17 @@ function updateBookingSummary() {
 // Attach listeners
 document.querySelectorAll('.addon-check').forEach(cb => {
   cb.addEventListener('change', recalculate);
+});
+// Base treatments are mutually exclusive – selecting one clears the other.
+document.querySelectorAll('.base-check').forEach(cb => {
+  cb.addEventListener('change', () => {
+    if (cb.checked) {
+      document.querySelectorAll('.base-check').forEach(other => {
+        if (other !== cb) other.checked = false;
+      });
+    }
+    recalculate();
+  });
 });
 document.querySelectorAll('.qty-input').forEach(input => {
   input.addEventListener('input', () => {
@@ -685,7 +706,7 @@ function renderOrderSummary() {
     : '';
 
   const baseRow = state.baseIncluded
-    ? `<div class="summary-item"><span>💅 מניקור לק ג'ל (בסיסי)</span><span>140 ₪</span></div>`
+    ? `<div class="summary-item"><span>💅 ${state.baseName}</span><span>${state.basePrice} ₪</span></div>`
     : '';
 
   box.innerHTML = `
@@ -779,7 +800,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   btn.textContent = 'שולחת…';
 
   const services = [
-    ...(state.baseIncluded ? [{ name: "מניקור לק ג'ל", time: 75, price: 140 }] : []),
+    ...(state.baseIncluded ? [{ name: state.baseName, time: state.baseTime, price: state.basePrice }] : []),
     ...state.addons
   ];
 
@@ -866,7 +887,7 @@ function renderSuccessCard({ heading, subtitle, treatments, duration, price }) {
 
 function showSuccess(name, phone, notes) {
   const treatments = [
-    ...(state.baseIncluded ? ["מניקור לק ג'ל"] : []),
+    ...(state.baseIncluded ? [state.baseName] : []),
     ...state.addons.map(a => a.name)
   ];
   if (!treatments.length) treatments.push("מניקור לק ג'ל");

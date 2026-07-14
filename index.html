@@ -201,21 +201,44 @@
         <div class="booking-step active" id="step-1">
           <h3 class="step-title">בחרי את הטיפולים שלך</h3>
 
-          <!-- Base treatment (checkbox, on by default; remove for a quick fix) -->
-          <div class="base-treatment-row">
-            <label class="addon-checkbox-label">
-              <input type="checkbox" class="addon-check" id="chk-base" checked />
-              <div class="custom-check"></div>
-              <span class="t-emoji">💅</span>
-              <div class="treatment-detail">
-                <span class="t-name">מניקור לק ג'ל</span>
-                <span class="t-desc">הטיפול הבסיסי – מניקור מלא עם לק ג'ל עמיד ומבריק. ניתן להסיר לתיקון/השלמה מהירה</span>
-              </div>
-              <div class="treatment-nums">
-                <span class="t-time">75 דק'</span>
-                <span class="t-price">140 ₪</span>
-              </div>
-            </label>
+          <!-- Base treatments – pick one (mutually exclusive); the anatomic
+               structure option is the default. Unchecking both = quick fix. -->
+          <div class="base-treatment-group">
+
+            <!-- Gel manicure with anatomic structure (default) -->
+            <div class="base-treatment-row" data-time="90" data-price="160">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="base-check" id="chk-base-anatomic" checked />
+                <div class="custom-check"></div>
+                <span class="t-emoji">💅</span>
+                <div class="treatment-detail">
+                  <span class="t-name">מניקור לק ג'ל עם מבנה אנטומי</span>
+                  <span class="t-desc">הטיפול המומלץ – מניקור מלא עם לק ג'ל ומבנה אנטומי לחיזוק, ניפוח וצורה מושלמת לציפורן</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">90 דק'</span>
+                  <span class="t-price">160 ₪</span>
+                </div>
+              </label>
+            </div>
+
+            <!-- Gel manicure (basic) -->
+            <div class="base-treatment-row" data-time="75" data-price="140">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="base-check" id="chk-base" />
+                <div class="custom-check"></div>
+                <span class="t-emoji">💅</span>
+                <div class="treatment-detail">
+                  <span class="t-name">מניקור לק ג'ל</span>
+                  <span class="t-desc">הטיפול הבסיסי – מניקור מלא עם לק ג'ל עמיד ומבריק. ניתן להסיר לתיקון/השלמה מהירה</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">75 דק'</span>
+                  <span class="t-price">140 ₪</span>
+                </div>
+              </label>
+            </div>
+
           </div>
 
           <!-- Checkbox add-ons -->
@@ -224,23 +247,6 @@
           </div>
 
           <div class="addon-list">
-
-            <!-- Anatomic -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
-              <label class="addon-checkbox-label">
-                <input type="checkbox" class="addon-check" id="chk-anatomic" />
-                <div class="custom-check"></div>
-                <span class="a-emoji">🔬</span>
-                <div class="addon-detail">
-                  <span class="a-name">מניקור לק ג'ל עם מבנה אנטומי</span>
-                  <span class="a-desc">תוספת מבנה אנטומי לחיזוק, ניפוח וצורה מושלמת לציפורן</span>
-                </div>
-                <div class="addon-nums">
-                  <span class="a-time">+15 דק'</span>
-                  <span class="a-price">+20 ₪</span>
-                </div>
-              </label>
-            </div>
 
             <!-- Double base -->
             <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
