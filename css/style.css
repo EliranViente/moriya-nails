@@ -116,6 +116,7 @@ ul { list-style: none; }
   display: flex;
   align-items: center;
   gap: 10px;
+  align-self: stretch;   /* fill the full bar height so the whole logo area is clickable */
 }
 
 /* Logo image (real Moriya Nails logo) */

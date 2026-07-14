@@ -969,7 +969,7 @@ window.openMyAppointments = openMyAppointments;
 function renderApptsList(appts) {
   const list = document.getElementById('appts-list');
   if (!appts.length) {
-    list.innerHTML = '<p class="appts-empty">אין לך תורים קרובים 💅<br/>אפשר לקבוע תור חדש בכל עת</p>';
+    list.innerHTML = '<p class="appts-empty">אין לך תורים קרובים 💅<br/>ניתן לקבוע תור חדש בכל עת</p>';
     return;
   }
 
@@ -1005,7 +1005,7 @@ async function cancelAppointment(id, appts) {
   const ok = await confirmDialog({
     icon:        '🗓️',
     title:       'לבטל את התור?',
-    message:     'התור יוסר מהיומן שלך. תמיד אפשר לקבוע תור חדש מתי שתרצי 💕',
+    message:     'התור יוסר מהיומן שלך. ניתן לקבוע תור חדש בכל עת 💗',
     confirmText: 'כן, בטלי את התור',
     cancelText:  'השאירי את התור',
     tone:        'danger',
@@ -1053,7 +1053,7 @@ function startReschedule(id, appts) {
   const title = document.getElementById('step2-title');
   const hint  = document.getElementById('step2-hint');
   if (title) title.textContent = 'בחרי מועד חדש';
-  if (hint)  hint.textContent  = '📅 בחרי יום פתוח ושעה פנויה למועד החדש';
+  if (hint)  hint.textContent  = '📅 בחרי יום ושעה פנויה למועד החדש';
 
   const next = document.getElementById('go-step3');
   if (next) { next.textContent = 'עדכני תור ✓'; next.disabled = true; }
