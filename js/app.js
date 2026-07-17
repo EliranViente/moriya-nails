@@ -421,11 +421,20 @@ async function renderCalendar() {
   const daysInMonth = lastDay.getDate();
   const startDow    = firstDay.getDay(); // 0=Sun
 
+  // Clients book inside a rolling window only – no navigating past its month,
+  // and no navigating back before the current one.
+  const horizon    = MoriyaBooking.horizonDate();
+  const horizonStr = MoriyaBooking.toDateStr(horizon);
+  const atLast  = calYear > horizon.getFullYear() ||
+                  (calYear === horizon.getFullYear() && calMonth >= horizon.getMonth());
+  const atFirst = calYear < today.getFullYear() ||
+                  (calYear === today.getFullYear() && calMonth <= today.getMonth());
+
   let html = `
     <div class="cal-header">
-      <button class="cal-nav" id="cal-prev">›</button>
+      <button class="cal-nav" id="cal-prev" ${atFirst ? 'disabled' : ''}>›</button>
       <h4>${HE_MONTHS[calMonth]} ${calYear}</h4>
-      <button class="cal-nav" id="cal-next">‹</button>
+      <button class="cal-nav" id="cal-next" ${atLast ? 'disabled' : ''}>‹</button>
     </div>
     <div class="cal-grid">
       ${HE_DAY_NAMES.map(d => `<div class="cal-day-name">${d}</div>`).join('')}
@@ -441,25 +450,34 @@ async function renderCalendar() {
     const isPast    = d < today;
     const dateStr   = `${calYear}-${padNum(calMonth+1)}-${padNum(day)}`;
     const isSelected = state.selectedDate === dateStr;
+    const isBeyond  = dateStr > horizonStr;
 
     // Bookable when the day has effective open windows (Fridays by default,
-    // any day the admin opened explicitly, unless closed for the day).
+    // any day the admin opened explicitly, unless closed for the day) and it
+    // falls inside the rolling booking window.
     const dayInfo  = byDate.get(dateStr);
-    const bookable = !isPast && effectiveOpenWindows(dateStr, dayInfo).length > 0;
+    const bookable = !isPast && !isBeyond && effectiveOpenWindows(dateStr, dayInfo).length > 0;
 
     let cls = 'cal-day';
     if (!bookable) {
-      cls += isPast ? ' past' : ' not-friday';
+      cls += isPast ? ' past' : isBeyond ? ' beyond-horizon' : ' not-friday';
     } else {
       cls += ' friday-avail';
       if (isSelected) cls += ' selected';
     }
 
     const dataAttr = bookable ? `data-date="${dateStr}"` : '';
-    html += `<div class="${cls}" ${dataAttr}>${day}</div>`;
+    const title = isBeyond ? ' title="ניתן לקבוע תורים עד חודשיים מראש"' : '';
+    html += `<div class="${cls}" ${dataAttr}${title}>${day}</div>`;
   }
 
   html += '</div>';
+  // Explain the window only on the last navigable month – the first page where
+  // days actually appear blocked. Earlier months need no explanation.
+  if (atLast) {
+    const [hY, hM, hD] = horizonStr.split('-');
+    html += `<p class="cal-horizon-note">🗓️ ניתן לקבוע תור עד ${hD}/${hM}/${hY} · מועדים רחוקים יותר ייפתחו בהמשך 💕</p>`;
+  }
   box.innerHTML = html;
 
   document.getElementById('cal-prev')?.addEventListener('click', () => {
@@ -626,7 +644,8 @@ async function findNearestSlot() {
   }
 
   const d = new Date(today);
-  for (let i = 0; i < 70; i++) {                 // search up to ~10 weeks ahead
+  const horizon = MoriyaBooking.horizonDate();
+  while (d <= horizon) {                         // search the whole booking window
     const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     const wins    = await getDayWindows(dateStr);
     // Bookable when the day has effective open windows (Fridays by default).
@@ -653,7 +672,7 @@ async function goToNearestSlot() {
   const result = await findNearestSlot();
 
   if (btn) { btn.disabled = false; btn.textContent = '✨ מצאי לי את התור הקרוב ביותר'; }
-  if (!result) { alert('לא נמצא תור פנוי בקרוב. נסי שוב מאוחר יותר 💅'); return; }
+  if (!result) { alert('לא נמצא תור פנוי בחודשיים הקרובים. נסי שוב מאוחר יותר 💅'); return; }
 
   // Navigate the calendar to that month and auto-select the found slot
   const [y, m] = result.date.split('-').map(Number);
@@ -1053,7 +1072,7 @@ function startReschedule(id, appts) {
   const title = document.getElementById('step2-title');
   const hint  = document.getElementById('step2-hint');
   if (title) title.textContent = 'בחרי מועד חדש';
-  if (hint)  hint.textContent  = '📅 בחרי יום ושעה פנויה למועד החדש';
+  if (hint)  hint.textContent  = '📅 בחרי יום ושעה פנויים למועד החדש';
 
   const next = document.getElementById('go-step3');
   if (next) { next.textContent = 'עדכני תור ✓'; next.disabled = true; }
@@ -1073,7 +1092,7 @@ function exitRescheduleMode() {
   const title = document.getElementById('step2-title');
   const hint  = document.getElementById('step2-hint');
   if (title) title.textContent = 'בחרי תאריך ושעה';
-  if (hint)  hint.textContent  = '📅 בחרי יום פתוח להזמנה ושעה פנויה';
+  if (hint)  hint.textContent  = '📅 בחרי יום ושעה פנויים לתור';
   const back = document.getElementById('back-step1');
   if (back) back.textContent = '→ חזרה';
   const next = document.getElementById('go-step3');

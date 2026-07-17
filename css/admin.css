@@ -160,6 +160,20 @@
 .cal-legend-dot {
   width: 14px; height: 14px; border-radius: 50%; display: inline-block;
   background: var(--pink-100); border: 2px solid var(--pink-400);
+  flex-shrink: 0;
+}
+.cal-legend-dot.is-beyond { opacity: 0.45; }
+
+/* Banner on a day the clients can't see yet. */
+.day-horizon-note {
+  background: var(--pink-50);
+  border: 1px dashed var(--pink-300);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  margin-bottom: 12px;
+  font-size: 0.82rem;
+  line-height: 1.6;
+  color: var(--gray-600);
 }
 #admin-cal-box .cal-header { padding: 18px 22px; }
 #admin-cal-box .cal-header h4 { font-size: 1.2rem; }
@@ -177,6 +191,8 @@
   width: 5px; height: 5px; border-radius: 50%; background: var(--pink-500);
 }
 #admin-cal-box .cal-day.has-windows.selected::after { background: #fff; }
+/* Past the clients' rolling window: editable, but not yet offered to them. */
+#admin-cal-box .cal-day.beyond-horizon:not(.selected) { opacity: 0.45; }
 /* Days explicitly closed by the admin. */
 #admin-cal-box .cal-day.is-closed {
   background: var(--gray-100);

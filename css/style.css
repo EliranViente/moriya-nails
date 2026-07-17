@@ -938,6 +938,8 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   transition: background var(--transition);
 }
 .cal-nav:hover { background: var(--pink-100); }
+.cal-nav:disabled { opacity: 0.3; cursor: default; }
+.cal-nav:disabled:hover { background: none; }
 
 .cal-grid {
   display: grid;
@@ -967,6 +969,8 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 .cal-day.empty { background: none; }
 .cal-day.past { color: var(--gray-100); }
 .cal-day.not-friday { color: var(--gray-400); }
+/* Beyond the rolling booking window – shown, but not yet open for booking. */
+.cal-day.beyond-horizon { color: var(--gray-100); }
 .cal-day.friday-avail {
   font-weight: 700;
   color: var(--pink-500);
@@ -983,6 +987,14 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   color: var(--white) !important;
   border-color: transparent !important;
   box-shadow: 0 3px 10px rgba(232,88,128,0.35);
+}
+.cal-horizon-note {
+  margin: 0;
+  padding: 10px 12px 14px;
+  text-align: center;
+  font-size: 0.78rem;
+  color: var(--gray-400);
+  border-top: 1px solid var(--pink-100);
 }
 
 /* Time slots */

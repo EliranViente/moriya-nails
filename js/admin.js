@@ -226,6 +226,10 @@ async function renderAdminCalendar() {
     <div class="cal-grid">
       ${HE_DAY_NAMES.map(d => `<div class="cal-day-name">${d}</div>`).join('')}`;
   for (let i = 0; i < firstDow; i++) html += '<div class="cal-day empty"></div>';
+  // The admin calendar itself is unlimited; days past the clients' rolling
+  // window are still fully editable, just flagged as not-yet-offered.
+  const horizonStr = MoriyaBooking.horizonStr();
+
   for (let day = 1; day <= daysInMonth; day++) {
     const d = new Date(adminCalYear, adminCalMonth, day);
     const dateStr = `${adminCalYear}-${pad(adminCalMonth + 1)}-${pad(day)}`;
@@ -237,7 +241,12 @@ async function renderAdminCalendar() {
     if (dateStr === adminSelDate) cls += ' selected';
     if (info && info.closed) cls += ' is-closed';
     else if (effectiveOpen(dateStr, info).length) cls += ' has-windows';
-    html += `<div class="${cls}" ${isPast ? '' : `data-date="${dateStr}"`}>${day}</div>`;
+    let title = '';
+    if (!isPast && dateStr > horizonStr) {
+      cls += ' beyond-horizon';
+      title = ` title="ייפתח ללקוחות ב-${fmtDate(MoriyaBooking.visibleFrom(dateStr))}"`;
+    }
+    html += `<div class="${cls}" ${isPast ? '' : `data-date="${dateStr}"`}${title}>${day}</div>`;
   }
   html += '</div>';
   box.innerHTML = html;
@@ -503,6 +512,13 @@ async function loadDayWindows(date) {
   if (error) { list.innerHTML = '<p class="avail-empty">שגיאה בטעינה</p>'; delDayBtn.style.display = 'none'; return; }
 
   dashDayRows   = data || [];
+
+  // Everything set here is saved right away; it just isn't offered to clients
+  // until the rolling two-month window reaches this date.
+  const note = MoriyaBooking.isWithin(date) ? '' :
+    `<div class="day-horizon-note">👀 היום הזה עדיין לא מוצג ללקוחות — הוא ייפתח לקביעת תורים ב-${fmtDate(MoriyaBooking.visibleFrom(date))},
+     חודשיים לפני המועד. השעות שתגדירי כאן יישמרו ויופיעו אוטומטית באותו יום.</div>`;
+
   const closed   = dashDayRows.some(r => r.kind === 'closed');
   const openRows = dashDayRows.filter(r => r.kind === 'open');
   const blockRows = dashDayRows.filter(r => r.kind === 'block');
@@ -511,7 +527,8 @@ async function loadDayWindows(date) {
 
   // Day explicitly marked closed.
   if (closed) {
-    list.innerHTML = `<div class="day-closed">🚫 היום הזה סגור — לא מוצעים בו תורים.</div>
+    list.innerHTML = `${note}
+      <div class="day-closed">🚫 היום הזה סגור — לא מוצעים בו תורים.</div>
       <button class="admin-btn ghost full" id="reopen-day">↩ החזירי שעות עבודה</button>`;
     document.getElementById('reopen-day').onclick = () => reopenDay(date);
     delDayBtn.style.display = 'none';
@@ -525,12 +542,12 @@ async function loadDayWindows(date) {
     : (usingDefault ? [{ id: null, s: 9 * 60, e: 17 * 60, range: '09:00–17:00' }] : []);
 
   if (!openWins.length && !blockRows.length) {
-    list.innerHTML = '<p class="avail-empty">אין שעות עבודה ליום זה.<br/>הוסיפי חלון עבודה כדי לפתוח תורים.</p>';
+    list.innerHTML = `${note}<p class="avail-empty">אין שעות עבודה ליום זה.<br/>הוסיפי חלון עבודה כדי לפתוח תורים.</p>`;
     delDayBtn.style.display = 'none';
     return;
   }
 
-  let rowsHtml = openWins.map(w => {
+  let rowsHtml = note + openWins.map(w => {
     const slots = sliceSlots(w.s, w.e, dashDayBlocks);
     const slotsTxt = slots.length ? slots.map(fromMin).join(' · ') : 'אין תורים (חלון קצר מדי)';
     const defLabel = w.id ? '' : ' <span class="win-default">ברירת מחדל (שישי)</span>';
