@@ -542,6 +542,13 @@ ul { list-style: none; }
   background: var(--pink-200);
   color: var(--pink-500);
 }
+/* A completed step is a shortcut back to it. */
+.step-item.clickable { cursor: pointer; }
+.step-item.clickable:hover .step-dot {
+  background: var(--pink-300);
+  color: var(--white);
+}
+.step-item.clickable:hover span { color: var(--pink-500); }
 .step-line {
   flex: 1;
   max-width: 80px;
@@ -1133,6 +1140,12 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 .form-group input.error,
 .form-group textarea.error {
   border-color: #e53e3e;
+  box-shadow: 0 0 0 3px rgba(229, 62, 62, 0.15);
+}
+/* Keep a scrolled-to field clear of the sticky header. */
+.form-group input,
+.form-group textarea {
+  scroll-margin-top: 90px;
 }
 
 .order-summary {
@@ -1738,6 +1751,7 @@ input:focus-visible,
 textarea:focus-visible,
 .time-slot:focus-visible,
 .cal-day:focus-visible,
+.step-item:focus-visible,
 .g-item:focus-visible {
   outline: 3px solid var(--pink-400);
   outline-offset: 2px;

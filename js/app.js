@@ -409,6 +409,22 @@ async function getDayWindows(dateStr) {
   return { open: effectiveOpenWindows(dateStr, info), block: info.block || [] };
 }
 
+// Busy intervals for a day, cached so the calendar can check every open day
+// without re-hitting the backend on each re-render. On error we treat the day
+// as free (safe default – the day stays available).
+const busySlotsCache = new Map(); // dateStr → [{start,end}]
+async function getBusySlots(dateStr) {
+  if (busySlotsCache.has(dateStr)) return busySlotsCache.get(dateStr);
+  let busy = [];
+  try {
+    const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
+    const data = await res.json();
+    busy = data.busySlots || [];
+  } catch (e) { /* backend unreachable → treat as free */ }
+  busySlotsCache.set(dateStr, busy);
+  return busy;
+}
+
 async function renderCalendar() {
   const box    = document.getElementById('calendar-box');
   const today  = new Date();
@@ -445,18 +461,34 @@ async function renderCalendar() {
     html += '<div class="cal-day empty"></div>';
   }
 
+  // First pass: classify each day. A "candidate" has effective open windows
+  // (Fridays by default, any day the admin opened, unless closed) and falls
+  // inside the rolling booking window.
+  const dayMeta = [];
   for (let day = 1; day <= daysInMonth; day++) {
-    const d = new Date(calYear, calMonth, day);
-    const isPast    = d < today;
-    const dateStr   = `${calYear}-${padNum(calMonth+1)}-${padNum(day)}`;
-    const isSelected = state.selectedDate === dateStr;
-    const isBeyond  = dateStr > horizonStr;
+    const d        = new Date(calYear, calMonth, day);
+    const isPast   = d < today;
+    const dateStr  = `${calYear}-${padNum(calMonth+1)}-${padNum(day)}`;
+    const isBeyond = dateStr > horizonStr;
+    const hasWindows = effectiveOpenWindows(dateStr, byDate.get(dateStr)).length > 0;
+    dayMeta.push({ day, dateStr, isPast, isBeyond, candidate: !isPast && !isBeyond && hasWindows });
+  }
 
-    // Bookable when the day has effective open windows (Fridays by default,
-    // any day the admin opened explicitly, unless closed for the day) and it
-    // falls inside the rolling booking window.
-    const dayInfo  = byDate.get(dateStr);
-    const bookable = !isPast && !isBeyond && effectiveOpenWindows(dateStr, dayInfo).length > 0;
+  // Second pass: for candidate days, check the calendar so days whose free
+  // slots are all taken render (and behave) like non-working days – the client
+  // can only pick a date that still has room for her selected treatment.
+  const fullDates = new Set();
+  await Promise.all(dayMeta.filter(m => m.candidate).map(async m => {
+    const wins    = await getDayWindows(m.dateStr);
+    const busy    = await getBusySlots(m.dateStr);
+    const hasFree = buildAvailableSlots(state.totalTime, busy, m.dateStr, wins).some(s => !s.busy);
+    if (!hasFree) fullDates.add(m.dateStr);
+  }));
+
+  for (const meta of dayMeta) {
+    const { day, dateStr, isPast, isBeyond, candidate } = meta;
+    const isSelected = state.selectedDate === dateStr;
+    const bookable   = candidate && !fullDates.has(dateStr);
 
     let cls = 'cal-day';
     if (!bookable) {
@@ -467,7 +499,9 @@ async function renderCalendar() {
     }
 
     const dataAttr = bookable ? `data-date="${dateStr}"` : '';
-    const title = isBeyond ? ' title="ניתן לקבוע תורים עד חודשיים מראש"' : '';
+    let title = '';
+    if (isBeyond)                    title = ' title="ניתן לקבוע תורים עד חודשיים מראש"';
+    else if (candidate && !bookable) title = ' title="אין שעות פנויות ביום זה"';
     html += `<div class="${cls}" ${dataAttr}${title}>${day}</div>`;
   }
 
@@ -651,12 +685,7 @@ async function findNearestSlot() {
     // Bookable when the day has effective open windows (Fridays by default).
     const bookable = wins.open.length > 0;
     if (bookable && !bookedDates.has(dateStr)) {
-      let busy = [];
-      try {
-        const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
-        const data = await res.json();
-        busy = data.busySlots || [];
-      } catch (e) { /* treat as free */ }
+      const busy = await getBusySlots(dateStr);
       const free = buildAvailableSlots(state.totalTime, busy, dateStr, wins).find(s => !s.busy);
       if (free) return { date: dateStr, time: free.label };
     }
@@ -760,6 +789,13 @@ async function getAccessToken() {
   } catch { return null; }
 }
 
+// Clear the error highlight as soon as the client starts filling a field.
+['f-name', 'f-phone'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', function () {
+    this.classList.remove('error');
+  });
+});
+
 document.getElementById('back-step2')?.addEventListener('click', () => showStep(2));
 
 document.getElementById('booking-form')?.addEventListener('submit', async e => {
@@ -769,19 +805,26 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   const phone = document.getElementById('f-phone').value.trim();
   const notes = document.getElementById('f-notes').value.trim();
 
-  // Simple validation
+  // Validation. Autofill fills name/phone for Google users, but a guest who
+  // skipped a required field must be shown exactly what's missing – so we mark
+  // each empty field and scroll the page to the first one (and focus it).
   let valid = true;
+  let firstInvalid = null;
+  const nameEl  = document.getElementById('f-name');
+  const phoneEl = document.getElementById('f-phone');
   if (!name) {
-    document.getElementById('f-name').classList.add('error');
+    nameEl.classList.add('error');
+    if (!firstInvalid) firstInvalid = nameEl;
     valid = false;
   } else {
-    document.getElementById('f-name').classList.remove('error');
+    nameEl.classList.remove('error');
   }
   if (!phone) {
-    document.getElementById('f-phone').classList.add('error');
+    phoneEl.classList.add('error');
+    if (!firstInvalid) firstInvalid = phoneEl;
     valid = false;
   } else {
-    document.getElementById('f-phone').classList.remove('error');
+    phoneEl.classList.remove('error');
   }
   // Treatment policies must be opened and confirmed before booking
   const policyCheck   = document.getElementById('chk-policy');
@@ -789,13 +832,21 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   if (!policyCheck || !policyCheck.checked) {
     if (policyConsent) {
       policyConsent.classList.add('error');
-      policyConsent.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      if (!firstInvalid) firstInvalid = policyConsent;
     }
     valid = false;
   } else if (policyConsent) {
     policyConsent.classList.remove('error');
   }
-  if (!valid) return;
+  if (!valid) {
+    if (firstInvalid) {
+      firstInvalid.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      // Focus the field so the client lands right on the highlighted input,
+      // without a second jump (we already smooth-scrolled to it).
+      if (typeof firstInvalid.focus === 'function') firstInvalid.focus({ preventScroll: true });
+    }
+    return;
+  }
 
   const btn = e.target.querySelector('.btn-confirm');
 
@@ -931,13 +982,24 @@ function showStep(num) {
   const target = document.getElementById(`step-${num}`);
   if (target) target.style.display = 'block';
 
-  // Update step indicators
+  // Update step indicators. A completed step doubles as a shortcut back to it.
   document.querySelectorAll('.step-item').forEach(item => {
     const n = parseInt(item.dataset.step);
     item.classList.remove('active', 'done');
     if (typeof num === 'number') {
       if (n === num)  item.classList.add('active');
       if (n <  num)   item.classList.add('done');
+    }
+    const canGoBack = item.classList.contains('done');
+    item.classList.toggle('clickable', canGoBack);
+    if (canGoBack) {
+      item.setAttribute('role', 'button');
+      item.setAttribute('tabindex', '0');
+      item.setAttribute('title', 'חזרה לשלב זה');
+    } else {
+      item.removeAttribute('role');
+      item.removeAttribute('tabindex');
+      item.removeAttribute('title');
     }
   });
 
@@ -952,6 +1014,27 @@ function showStep(num) {
   const bookingEl = document.getElementById('booking');
   if (bookingEl) bookingEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
 }
+
+// ─── Step bar – jump back to a step already completed ─────────────────────────
+// Only completed steps are clickable; moving forward stays with the flow's own
+// buttons, which validate the step and refresh what the next one needs.
+function goBackToStep(num) {
+  if (num >= currentBookingStep) return;
+  showStep(num);
+}
+
+document.querySelectorAll('.step-item').forEach(item => {
+  const n = parseInt(item.dataset.step);
+  item.addEventListener('click', () => {
+    if (item.classList.contains('done')) goBackToStep(n);
+  });
+  item.addEventListener('keydown', e => {
+    if ((e.key === 'Enter' || e.key === ' ') && item.classList.contains('done')) {
+      e.preventDefault();
+      goBackToStep(n);
+    }
+  });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  MY APPOINTMENTS – view / reschedule / cancel (logged-in users)
