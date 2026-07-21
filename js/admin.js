@@ -811,8 +811,10 @@ function openClientModal(client) {
   document.getElementById('cstat-total').textContent     = st.total;
   document.getElementById('cstat-done').textContent      = st.done;
   document.getElementById('cstat-cancelled').textContent = st.cancelled;
-  renderClientPie(st);
+  // Show the modal *before* drawing so Chart.js can measure a laid-out canvas
+  // (a chart created inside a display:none element renders at zero size).
   document.getElementById('client-modal').style.display = 'flex';
+  renderClientPie(st);
 }
 
 // On-brand doughnut of the client's appointment mix. Empty statuses are dropped.
@@ -871,15 +873,34 @@ function wireClientsControls() {
     renderClients();
   });
 
-  const tbody = document.getElementById('clients-tbody');
-  if (tbody) tbody.addEventListener('click', e => {
-    const row = e.target.closest('.client-row');
-    if (!row) return;
+  const modal = document.getElementById('client-modal');
+  const openRow = row => {
     const client = dash.clients.find(c => String(c.id) === row.dataset.clientId);
     if (client) openClientModal(client);
-  });
+  };
 
-  const modal = document.getElementById('client-modal');
+  const tbody = document.getElementById('clients-tbody');
+  if (tbody) {
+    // Click works everywhere (and is the only trigger on touch devices).
+    tbody.addEventListener('click', e => {
+      const row = e.target.closest('.client-row');
+      if (row) openRow(row);
+    });
+
+    // On devices with a real pointer, hovering a row also opens its stats.
+    // Guarded so moving within the same row doesn't redraw the chart.
+    if (window.matchMedia('(hover: hover)').matches) {
+      let hoverId = null;
+      tbody.addEventListener('mouseover', e => {
+        const row = e.target.closest('.client-row');
+        if (!row) return;
+        if (row.dataset.clientId === hoverId && modal.style.display === 'flex') return;
+        hoverId = row.dataset.clientId;
+        openRow(row);
+      });
+    }
+  }
+
   const close = document.getElementById('client-modal-close');
   const hide  = () => { if (modal) modal.style.display = 'none'; };
   if (close) close.addEventListener('click', hide);
