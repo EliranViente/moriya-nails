@@ -804,16 +804,17 @@ function clientStats(clientId) {
   };
 }
 
-function openClientModal(client) {
+// Fill the live side panel with a client's stats. The panel stays in the page,
+// so hovering down the rows updates it in place instead of covering the table.
+function showClientPanel(client) {
   const st = clientStats(client.id);
-  document.getElementById('client-modal-name').textContent = client.full_name || 'לקוחה ללא שם';
-  document.getElementById('client-modal-sub').textContent  = client.phone || client.email || '';
+  document.getElementById('client-panel-empty').hidden = true;
+  document.getElementById('client-panel-body').hidden  = false;   // reveal before drawing
+  document.getElementById('cp-name').textContent = client.full_name || 'לקוחה ללא שם';
+  document.getElementById('cp-sub').textContent  = client.phone || client.email || '';
   document.getElementById('cstat-total').textContent     = st.total;
   document.getElementById('cstat-done').textContent      = st.done;
   document.getElementById('cstat-cancelled').textContent = st.cancelled;
-  // Show the modal *before* drawing so Chart.js can measure a laid-out canvas
-  // (a chart created inside a display:none element renders at zero size).
-  document.getElementById('client-modal').style.display = 'flex';
   renderClientPie(st);
 }
 
@@ -873,41 +874,33 @@ function wireClientsControls() {
     renderClients();
   });
 
-  const modal = document.getElementById('client-modal');
-  const openRow = row => {
+  const tbody = document.getElementById('clients-tbody');
+  if (!tbody) return;
+
+  // Highlight the row and refresh the side panel. Guarded on the client id so
+  // moving the pointer within a row doesn't redraw the chart repeatedly.
+  let activeId = null;
+  const activate = row => {
+    if (row.dataset.clientId === activeId) return;
+    activeId = row.dataset.clientId;
+    tbody.querySelectorAll('.client-row.is-active').forEach(r => r.classList.remove('is-active'));
+    row.classList.add('is-active');
     const client = dash.clients.find(c => String(c.id) === row.dataset.clientId);
-    if (client) openClientModal(client);
+    if (client) showClientPanel(client);
   };
 
-  const tbody = document.getElementById('clients-tbody');
-  if (tbody) {
-    // Click works everywhere (and is the only trigger on touch devices).
-    tbody.addEventListener('click', e => {
-      const row = e.target.closest('.client-row');
-      if (row) openRow(row);
-    });
-
-    // On devices with a real pointer, hovering a row also opens its stats.
-    // Guarded so moving within the same row doesn't redraw the chart.
-    if (window.matchMedia('(hover: hover)').matches) {
-      let hoverId = null;
-      tbody.addEventListener('mouseover', e => {
-        const row = e.target.closest('.client-row');
-        if (!row) return;
-        if (row.dataset.clientId === hoverId && modal.style.display === 'flex') return;
-        hoverId = row.dataset.clientId;
-        openRow(row);
-      });
-    }
-  }
-
-  const close = document.getElementById('client-modal-close');
-  const hide  = () => { if (modal) modal.style.display = 'none'; };
-  if (close) close.addEventListener('click', hide);
-  if (modal) modal.addEventListener('click', e => { if (e.target === modal) hide(); });
-  document.addEventListener('keydown', e => {
-    if (e.key === 'Escape' && modal && modal.style.display === 'flex') hide();
+  // Click works everywhere (and is the only trigger on touch devices)…
+  tbody.addEventListener('click', e => {
+    const row = e.target.closest('.client-row');
+    if (row) activate(row);
   });
+  // …and on pointer devices, simply moving between rows updates the panel live.
+  if (window.matchMedia('(hover: hover)').matches) {
+    tbody.addEventListener('mouseover', e => {
+      const row = e.target.closest('.client-row');
+      if (row) activate(row);
+    });
+  }
 }
 
 async function adminCancel(id) {

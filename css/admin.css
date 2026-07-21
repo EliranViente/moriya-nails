@@ -361,6 +361,7 @@
   overflow-x: auto;
   border: 1px solid var(--pink-100);
   border-radius: var(--radius-md);
+  min-width: 0;   /* let the grid column shrink so the table scrolls internally */
 }
 .clients-table {
   width: 100%;
@@ -389,7 +390,11 @@
   cursor: pointer;
   transition: background var(--transition);
 }
-.clients-table tbody tr.client-row:hover { background: var(--pink-50); }
+.clients-table tbody tr.client-row:hover,
+.clients-table tbody tr.client-row.is-active { background: var(--pink-50); }
+.clients-table tbody tr.client-row.is-active td:first-child {
+  box-shadow: inset 3px 0 0 var(--pink-400);
+}
 .clients-table .cl-name { font-weight: 700; color: var(--gray-800); }
 .clients-table .cl-muted { color: var(--gray-400); }
 .clients-loading, .clients-empty {
@@ -397,10 +402,29 @@
 }
 .clients-loading { display: flex; align-items: center; justify-content: center; gap: 10px; }
 
-/* ── Client stats modal ── */
-.client-stats-card { max-width: 440px; text-align: center; }
-.client-stats-card .modal-title,
-.client-stats-card .modal-sub { text-align: center; }
+/* ── Clients layout: table + live side panel ── */
+.clients-layout {
+  display: grid;
+  grid-template-columns: 1fr 320px;
+  gap: 22px;
+  align-items: start;
+}
+.client-panel {
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+  background: var(--gray-50);
+  padding: 20px;
+  position: sticky;
+  top: 84px;                 /* rests below the sticky topbar while scrolling */
+}
+.client-panel-empty {
+  display: flex; flex-direction: column; align-items: center; gap: 10px;
+  text-align: center; color: var(--gray-400); font-size: 0.9rem; padding: 26px 8px;
+}
+.cpe-icon { font-size: 1.7rem; }
+.cp-name { font-size: 1.2rem; font-weight: 800; color: var(--gray-800); text-align: center; }
+.cp-sub { font-size: 0.85rem; color: var(--gray-600); text-align: center; margin-bottom: 18px; }
+
 .client-stats-grid {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
@@ -439,6 +463,9 @@
 @media (max-width: 900px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .charts-grid { grid-template-columns: 1fr; }
+  /* Stack the client panel under the table and stop it sticking. */
+  .clients-layout { grid-template-columns: 1fr; }
+  .client-panel { position: static; }
 }
 @media (max-width: 560px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 12px; }
