@@ -178,7 +178,6 @@
           <input type="search" id="clients-search" class="clients-search"
                  placeholder="חיפוש לפי שם, טלפון או אימייל…" aria-label="חיפוש לקוחות" />
         </div>
-        <p class="section-hint">רחפי (או לחצי) על לקוחה — הפילוח יוצג בצד, ומתעדכן כשעוברים בין השורות.</p>
         <div class="clients-layout">
           <div class="clients-table-wrap">
             <table class="clients-table">
@@ -198,13 +197,11 @@
             </table>
           </div>
 
-          <!-- Live details panel — updates on hover/click, stays in the page -->
-          <aside class="client-panel">
-            <div class="client-panel-empty" id="client-panel-empty">
-              <span class="cpe-icon">👆</span>
-              <span>רחפי על לקוחה כדי לראות את פילוח התורים שלה</span>
-            </div>
-            <div class="client-panel-body" id="client-panel-body" hidden>
+          <!-- Details popover: a hover card pinned to the table's left edge on
+               desktop, or a centered tap-to-open modal on touch. -->
+          <aside class="client-panel" id="client-panel" aria-hidden="true">
+            <div class="cp-card">
+              <button class="cp-close" id="cp-close" aria-label="סגירה">✕</button>
               <h3 class="cp-name" id="cp-name"></h3>
               <p class="cp-sub" id="cp-sub"></p>
               <div class="client-stats-grid">

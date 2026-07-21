@@ -402,28 +402,69 @@
 }
 .clients-loading { display: flex; align-items: center; justify-content: center; gap: 10px; }
 
-/* ── Clients layout: table + live side panel ── */
-.clients-layout {
-  display: grid;
-  grid-template-columns: 1fr 320px;
-  gap: 22px;
-  align-items: start;
-}
-.client-panel {
+/* ── Clients layout: full-width table + details popover ── */
+.clients-layout { position: relative; }
+
+/* The visible white card (shared by the desktop popover and the mobile modal). */
+.cp-card {
+  background: var(--white);
   border: 1px solid var(--pink-100);
   border-radius: var(--radius-md);
-  background: var(--gray-50);
-  padding: 20px;
-  position: sticky;
-  top: 84px;                 /* rests below the sticky topbar while scrolling */
+  box-shadow: var(--shadow-md);
+  padding: 18px;
+  position: relative;
 }
-.client-panel-empty {
-  display: flex; flex-direction: column; align-items: center; gap: 10px;
-  text-align: center; color: var(--gray-400); font-size: 0.9rem; padding: 26px 8px;
+.cp-name { font-size: 1.15rem; font-weight: 800; color: var(--gray-800); text-align: center; }
+.cp-sub  { font-size: 0.85rem; color: var(--gray-600); text-align: center; margin-bottom: 16px; }
+.cp-close { display: none; }   /* only shown in the mobile modal */
+
+/* DESKTOP (pointer devices): a small card pinned to the table's left edge,
+   floating over it and revealed on hover. pointer-events:none lets the mouse
+   keep hovering the rows underneath, so moving down updates it live. */
+@media (hover: hover) {
+  .client-panel {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 280px;
+    max-width: 92%;
+    z-index: 20;
+    pointer-events: none;
+    opacity: 0;
+    visibility: hidden;
+    transform: translateY(6px);
+    transition: opacity .16s ease, transform .16s ease, visibility .16s ease;
+  }
+  .client-panel.is-open { opacity: 1; visibility: visible; transform: none; }
 }
-.cpe-icon { font-size: 1.7rem; }
-.cp-name { font-size: 1.2rem; font-weight: 800; color: var(--gray-800); text-align: center; }
-.cp-sub { font-size: 0.85rem; color: var(--gray-600); text-align: center; margin-bottom: 18px; }
+
+/* MOBILE (touch): a centered popup modal over a dimmed backdrop, opened on tap. */
+@media (hover: none) {
+  .client-panel {
+    position: fixed;
+    inset: 0;
+    z-index: 2000;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+    background: rgba(51, 51, 51, 0.55);
+    backdrop-filter: blur(4px);
+    -webkit-backdrop-filter: blur(4px);
+    opacity: 0;
+    visibility: hidden;
+    transition: opacity .18s ease, visibility .18s ease;
+  }
+  .client-panel.is-open { opacity: 1; visibility: visible; }
+  .cp-card { width: 100%; max-width: 360px; padding: 26px 22px; box-shadow: var(--shadow-lg); }
+  .cp-close {
+    display: flex; align-items: center; justify-content: center;
+    position: absolute; top: 14px; left: 14px;
+    width: 32px; height: 32px; border-radius: 50%;
+    border: none; background: var(--pink-50); color: var(--gray-600);
+    font-size: 0.95rem; cursor: pointer;
+  }
+}
 
 .client-stats-grid {
   display: grid;
@@ -444,8 +485,8 @@
 .cstat-label { font-size: 0.76rem; color: var(--gray-600); font-weight: 600; }
 .client-chart-wrap {
   position: relative;
-  height: 220px;
-  max-width: 260px;
+  height: 190px;
+  max-width: 230px;
   margin: 0 auto;
 }
 .client-chart-empty {
@@ -463,9 +504,6 @@
 @media (max-width: 900px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; }
   .charts-grid { grid-template-columns: 1fr; }
-  /* Stack the client panel under the table and stop it sticking. */
-  .clients-layout { grid-template-columns: 1fr; }
-  .client-panel { position: static; }
 }
 @media (max-width: 560px) {
   .kpi-grid { grid-template-columns: 1fr 1fr; gap: 12px; }

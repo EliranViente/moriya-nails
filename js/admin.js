@@ -804,12 +804,9 @@ function clientStats(clientId) {
   };
 }
 
-// Fill the live side panel with a client's stats. The panel stays in the page,
-// so hovering down the rows updates it in place instead of covering the table.
+// Fill the details popover with a client's stats and draw the chart.
 function showClientPanel(client) {
   const st = clientStats(client.id);
-  document.getElementById('client-panel-empty').hidden = true;
-  document.getElementById('client-panel-body').hidden  = false;   // reveal before drawing
   document.getElementById('cp-name').textContent = client.full_name || 'לקוחה ללא שם';
   document.getElementById('cp-sub').textContent  = client.phone || client.email || '';
   document.getElementById('cstat-total').textContent     = st.total;
@@ -875,31 +872,48 @@ function wireClientsControls() {
   });
 
   const tbody = document.getElementById('clients-tbody');
-  if (!tbody) return;
+  const panel = document.getElementById('client-panel');
+  if (!tbody || !panel) return;
 
-  // Highlight the row and refresh the side panel. Guarded on the client id so
-  // moving the pointer within a row doesn't redraw the chart repeatedly.
+  const canHover = window.matchMedia('(hover: hover)').matches;
   let activeId = null;
-  const activate = row => {
-    if (row.dataset.clientId === activeId) return;
-    activeId = row.dataset.clientId;
+  const clearActive = () =>
     tbody.querySelectorAll('.client-row.is-active').forEach(r => r.classList.remove('is-active'));
-    row.classList.add('is-active');
-    const client = dash.clients.find(c => String(c.id) === row.dataset.clientId);
-    if (client) showClientPanel(client);
-  };
 
-  // Click works everywhere (and is the only trigger on touch devices)…
+  // Open the popover for a row. Guarded on the client id so moving the pointer
+  // within a row doesn't redraw the chart repeatedly.
+  const open = row => {
+    if (row.dataset.clientId !== activeId) {
+      activeId = row.dataset.clientId;
+      clearActive();
+      row.classList.add('is-active');
+      const client = dash.clients.find(c => String(c.id) === row.dataset.clientId);
+      if (client) showClientPanel(client);
+    }
+    panel.classList.add('is-open');
+  };
+  const close = () => { panel.classList.remove('is-open'); activeId = null; clearActive(); };
+
+  // Tap/click opens on every device (the only trigger on touch).
   tbody.addEventListener('click', e => {
     const row = e.target.closest('.client-row');
-    if (row) activate(row);
+    if (row) open(row);
   });
-  // …and on pointer devices, simply moving between rows updates the panel live.
-  if (window.matchMedia('(hover: hover)').matches) {
+
+  if (canHover) {
+    // Desktop: moving between rows updates the left-pinned popover live;
+    // leaving the table hides it so the full table is visible again.
     tbody.addEventListener('mouseover', e => {
       const row = e.target.closest('.client-row');
-      if (row) activate(row);
+      if (row) open(row);
     });
+    const wrap = document.querySelector('.clients-table-wrap');
+    if (wrap) wrap.addEventListener('mouseleave', close);
+  } else {
+    // Touch: close the modal via the ✕ button or a tap on the backdrop.
+    const closeBtn = document.getElementById('cp-close');
+    if (closeBtn) closeBtn.addEventListener('click', close);
+    panel.addEventListener('click', e => { if (e.target === panel) close(); });
   }
 }
 
