@@ -1548,7 +1548,7 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   display: flex;
   justify-content: center;
   gap: 6px;
-  padding: 6px 0 2px;
+  padding: 6px 0 16px;
 }
 .ip-dot {
   width: 6px;
@@ -1559,20 +1559,6 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   transition: background var(--transition), transform var(--transition);
 }
 .ip-dot.active { background: var(--pink-400); transform: scale(1.25); }
-
-/* Caption */
-.ip-caption {
-  padding: 6px 16px 18px;
-  font-size: 0.88rem;
-  color: var(--gray-700);
-  line-height: 1.5;
-}
-.ip-cap-handle {
-  font-weight: 700;
-  color: var(--gray-800);
-  margin-inline-end: 6px;
-  text-decoration: none;
-}
 
 /* ═══════════════════════════════════════════
    CONTACT
