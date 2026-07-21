@@ -1297,6 +1297,32 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   font-weight: 800;
 }
 
+/* ── Add-to-calendar button ── */
+.btn-gcal {
+  width: 100%;
+  max-width: 440px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 14px 20px;
+  border-radius: var(--radius-lg);
+  border: 1.5px solid var(--pink-200);
+  background: linear-gradient(135deg, var(--pink-50), var(--white));
+  color: var(--pink-500);
+  font-family: var(--font);
+  font-size: 1rem;
+  font-weight: 700;
+  text-decoration: none;
+  transition: transform var(--transition), box-shadow var(--transition), border-color var(--transition);
+}
+.btn-gcal:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+  border-color: var(--pink-300);
+}
+.btn-gcal-icon { font-size: 1.2rem; line-height: 1; }
+
 /* ── Parking / navigation block ── */
 .success-parking {
   width: 100%;
@@ -1734,7 +1760,23 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   .base-treatment-row { flex-wrap: wrap; }
   .steps-bar { padding: 20px 16px; }
   .step-line { max-width: 32px; }
-  .addon-row.qty-row { flex-wrap: wrap; gap: 10px; }
+  /* Quantity add-ons: stack the details on top (full width) and put the
+     stepper + price/time on their own row so nothing gets squished. */
+  .addon-row.qty-row {
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 10px 12px;
+  }
+  .addon-row.qty-row .a-emoji { align-self: flex-start; margin-top: 2px; }
+  .addon-row.qty-row .addon-detail { flex: 1 1 calc(100% - 44px); }
+  .addon-row.qty-row .qty-wrap { order: 2; }
+  .addon-row.qty-row .addon-nums {
+    order: 3;
+    flex-direction: row;
+    align-items: center;
+    gap: 12px;
+    margin-inline-start: auto;
+  }
   .booking-summary { padding: 14px 14px; gap: 6px 0; }
   .bs-item { padding: 4px 14px; }
   .bs-item::before { display: none; }                /* drop vertical dividers */

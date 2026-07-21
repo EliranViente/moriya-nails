@@ -938,7 +938,7 @@ function formatHebrewDate(dateStr) {
 }
 
 // Fill the confirmation card with appointment details and show the success step.
-function renderSuccessCard({ heading, subtitle, treatments, duration, price }) {
+function renderSuccessCard({ heading, subtitle, treatments, duration, durationMinutes, price }) {
   const headingEl  = document.querySelector('#step-success h3');
   const subtitleEl = document.getElementById('success-subtitle');
   if (headingEl)  headingEl.textContent  = heading;
@@ -952,7 +952,32 @@ function renderSuccessCard({ heading, subtitle, treatments, duration, price }) {
   const treatEl = document.getElementById('sc-treatments');
   treatEl.innerHTML = treatments.map(t => `<span class="sc-treatment-item">${t}</span>`).join('');
 
+  const gcalEl = document.getElementById('sc-gcal');
+  if (gcalEl) gcalEl.href = buildGoogleCalendarUrl(treatments, durationMinutes, price);
+
   showStep('success');
+}
+
+// Build a Google Calendar "add event" link so the client can save the appointment
+// to her own phone calendar with one tap. Times are anchored to Israel time.
+function buildGoogleCalendarUrl(treatments, durationMinutes, priceText) {
+  const pad = n => String(n).padStart(2, '0');
+  const [y, m, d]   = state.selectedDate.split('-').map(Number);
+  const [hh, mm]    = state.selectedTime.split(':').map(Number);
+  const start = new Date(y, m - 1, d, hh, mm);
+  const end   = new Date(start.getTime() + durationMinutes * 60000);
+  const fmt = dt => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}`
+                  + `T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+
+  const params = new URLSearchParams({
+    action:   'TEMPLATE',
+    text:     `תור אצל מוריה – ${treatments.join(', ')}`,
+    dates:    `${fmt(start)}/${fmt(end)}`,
+    details:  `הטיפול: ${treatments.join(', ')}\nמחיר: ${priceText}`,
+    location: 'יעקב בר סימנטוב 18',
+    ctz:      'Asia/Jerusalem'
+  });
+  return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
 function showSuccess(name, phone, notes) {
@@ -965,9 +990,10 @@ function showSuccess(name, phone, notes) {
   const hasDeco = state.addons.some(a => a.priceLabel);
   renderSuccessCard({
     heading:    'התור נקבע בהצלחה!',
-    subtitle:   'ההזמנה נרשמה ביומן של מוריה. נשמח לראות אותך! 💅',
+    subtitle:   'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
     treatments,
-    duration:   formatDuration(state.totalTime),
+    duration:       formatDuration(state.totalTime),
+    durationMinutes: state.totalTime,
     price:      `${state.totalPrice} ₪${hasDeco ? ' + קישוט (ייקבע בתור)' : ''}`
   });
 }
@@ -1216,7 +1242,8 @@ async function updateAppointment() {
     heading:    'התור עודכן בהצלחה!',
     subtitle:   'המועד החדש נשמר ביומן של מוריה. נתראה! 💅',
     treatments,
-    duration:   formatDuration(editingAppointment.duration_min),
+    duration:       formatDuration(editingAppointment.duration_min),
+    durationMinutes: editingAppointment.duration_min,
     price:      `${editingAppointment.total_price} ₪`
   });
 
