@@ -339,6 +339,97 @@
 .appt-btn.remind { color: #0a8a4a; background: #e8f8ef; border-color: #bfe9d2; }
 .appt-btn.remind:hover { background: #d6f2e2; border-color: #9fe0bd; }
 
+/* ── Clients table ── */
+/* The hint sits between the header row and the table when used standalone. */
+.admin-section > .section-hint { margin: -8px 0 16px; }
+.clients-search {
+  font-family: var(--font);
+  font-size: 0.88rem;
+  color: var(--gray-800);
+  padding: 9px 16px;
+  min-width: 240px;
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-xl);
+  background: var(--white);
+  outline: none;
+  transition: border-color var(--transition), box-shadow var(--transition);
+}
+.clients-search:focus { border-color: var(--pink-400); box-shadow: var(--shadow-sm); }
+.clients-search::placeholder { color: var(--gray-400); }
+
+.clients-table-wrap {
+  overflow-x: auto;
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+}
+.clients-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.88rem;
+  white-space: nowrap;
+}
+.clients-table thead th {
+  text-align: right;
+  font-weight: 700;
+  font-size: 0.78rem;
+  color: var(--gray-600);
+  background: var(--gray-50);
+  padding: 12px 16px;
+  border-bottom: 1px solid var(--pink-100);
+  position: sticky;
+  top: 0;
+}
+.clients-table tbody td {
+  padding: 12px 16px;
+  color: var(--gray-700);
+  border-bottom: 1px solid var(--pink-100);
+}
+.clients-table tbody tr:last-child td { border-bottom: none; }
+.clients-table tbody tr.client-row {
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.clients-table tbody tr.client-row:hover { background: var(--pink-50); }
+.clients-table .cl-name { font-weight: 700; color: var(--gray-800); }
+.clients-table .cl-muted { color: var(--gray-400); }
+.clients-loading, .clients-empty {
+  text-align: center; color: var(--gray-400); padding: 28px 16px;
+}
+.clients-loading { display: flex; align-items: center; justify-content: center; gap: 10px; }
+
+/* ── Client stats modal ── */
+.client-stats-card { max-width: 440px; text-align: center; }
+.client-stats-card .modal-title,
+.client-stats-card .modal-sub { text-align: center; }
+.client-stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin-bottom: 22px;
+}
+.cstat {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 14px 8px;
+  background: var(--pink-50);
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+}
+.cstat-num { font-size: 1.6rem; font-weight: 800; color: var(--gray-800); line-height: 1; }
+.cstat-num.is-done { color: var(--pink-500); }
+.cstat-num.is-cancelled { color: var(--gray-600); }
+.cstat-label { font-size: 0.76rem; color: var(--gray-600); font-weight: 600; }
+.client-chart-wrap {
+  position: relative;
+  height: 220px;
+  max-width: 260px;
+  margin: 0 auto;
+}
+.client-chart-empty {
+  position: absolute; inset: 0;
+  display: flex; align-items: center; justify-content: center;
+  color: var(--gray-400); font-size: 0.9rem;
+}
+
 /* ── Responsive ── */
 /* Stack the editor / calendar / day-hours before they get too cramped. */
 @media (max-width: 1080px) {
@@ -360,6 +451,9 @@
   .aac-actions { justify-content: flex-end; }
   .admin-main { padding: 20px 16px 60px; }
   .admin-section { padding: 18px; }
+  .clients-search { min-width: 0; width: 100%; }
+  .client-stats-grid { gap: 8px; }
+  .cstat-num { font-size: 1.35rem; }
 }
 
 /* ── Mobile optimization layer (touch-first, declared last) ── */

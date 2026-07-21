@@ -138,7 +138,9 @@ const HE_DAY_NAMES = ["א'","ב'","ג'","ד'","ה'","ו'","ש'"];
 // ─── Dashboard state ──────────────────────────────────────────────────────────
 const dash = {
   appointments: [],   // all appointments (admin sees everything via RLS)
+  clients: [],        // all client profiles (admin sees everything via RLS)
   clientsCount: 0,
+  clientsQuery: '',   // live search filter for the clients table
   chartRange: 30,
   apptFilter: 'upcoming',   // 'upcoming' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
@@ -153,13 +155,15 @@ let dashDayRows   = [];   // availability rows for the selected day
 let dashDayBlocks = [];   // break intervals {start,end} for the selected day
 
 async function initDashboard() {
-  await Promise.all([loadAppointments(), loadClientsCount()]);
+  await Promise.all([loadAppointments(), loadClients()]);
   renderKPIs();
   renderCharts();
   renderAppointments();
+  renderClients();
   populateTimeSelects();
   wireAvailabilityEditor();
   wireControls();
+  wireClientsControls();
 
   // Default the availability editor to the next Friday and open the calendar there.
   adminSelDate = nextFridayStr();
@@ -306,11 +310,14 @@ async function loadAppointments() {
   dash.appointments = data || [];
 }
 
-async function loadClientsCount() {
-  const { count, error } = await MoriyaAuth.sb
+async function loadClients() {
+  const { data, error } = await MoriyaAuth.sb
     .from('profiles')
-    .select('*', { count: 'exact', head: true });
-  dash.clientsCount = error ? 0 : (count || 0);
+    .select('id, full_name, phone, email, last_appointment, last_login, created_at')
+    .order('last_appointment', { ascending: false, nullsFirst: false });
+  if (error) { console.warn('loadClients:', error.message); dash.clients = []; }
+  else dash.clients = data || [];
+  dash.clientsCount = dash.clients.length;
 }
 
 // ─── KPI cards ────────────────────────────────────────────────────────────────
@@ -740,6 +747,146 @@ function renderAppointments() {
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
     b.addEventListener('click', () => adminCancel(b.dataset.id)));
+}
+
+// ─── Clients table ──────────────────────────────────────────────────────────────
+const MUTED = '<span class="cl-muted">—</span>';
+
+// Format a timestamptz as DD/MM/YYYY, optionally with HH:MM. Empty → em dash.
+function fmtStamp(ts, withTime) {
+  if (!ts) return MUTED;
+  const d = new Date(ts);
+  if (isNaN(d.getTime())) return MUTED;
+  const date = `${pad(d.getDate())}/${pad(d.getMonth() + 1)}/${d.getFullYear()}`;
+  return withTime ? `${date} ${pad(d.getHours())}:${pad(d.getMinutes())}` : date;
+}
+
+function renderClients() {
+  const tbody = document.getElementById('clients-tbody');
+  if (!tbody) return;
+
+  const q = dash.clientsQuery.trim().toLowerCase();
+  let list = dash.clients;
+  if (q) {
+    list = list.filter(c =>
+      (c.full_name || '').toLowerCase().includes(q) ||
+      (c.phone || '').toLowerCase().includes(q) ||
+      (c.email || '').toLowerCase().includes(q));
+  }
+
+  if (!list.length) {
+    const msg = q ? 'לא נמצאו לקוחות תואמות' : 'אין עדיין לקוחות';
+    tbody.innerHTML = `<tr><td colspan="6" class="clients-empty">${msg}</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = list.map(c => `
+    <tr class="client-row" data-client-id="${c.id}">
+      <td class="cl-name">${c.full_name || MUTED}</td>
+      <td dir="ltr" style="text-align:right;">${c.phone || MUTED}</td>
+      <td dir="ltr" style="text-align:right;">${c.email || MUTED}</td>
+      <td>${fmtStamp(c.last_appointment, true)}</td>
+      <td>${fmtStamp(c.last_login, true)}</td>
+      <td>${fmtStamp(c.created_at, false)}</td>
+    </tr>`).join('');
+}
+
+// Tally a client's appointments by status (matched on user_id).
+function clientStats(clientId) {
+  const appts = dash.appointments.filter(a => a.user_id === clientId);
+  const by = s => appts.filter(a => a.status === s).length;
+  return {
+    total:     appts.length,
+    done:      by('done'),
+    booked:    by('booked'),
+    cancelled: by('cancelled'),
+    noShow:    by('no_show'),
+  };
+}
+
+function openClientModal(client) {
+  const st = clientStats(client.id);
+  document.getElementById('client-modal-name').textContent = client.full_name || 'לקוחה ללא שם';
+  document.getElementById('client-modal-sub').textContent  = client.phone || client.email || '';
+  document.getElementById('cstat-total').textContent     = st.total;
+  document.getElementById('cstat-done').textContent      = st.done;
+  document.getElementById('cstat-cancelled').textContent = st.cancelled;
+  renderClientPie(st);
+  document.getElementById('client-modal').style.display = 'flex';
+}
+
+// On-brand doughnut of the client's appointment mix. Empty statuses are dropped.
+function renderClientPie(st) {
+  const canvas = document.getElementById('client-pie');
+  const empty  = document.getElementById('client-chart-empty');
+  if (dash.charts.clientPie) { dash.charts.clientPie.destroy(); dash.charts.clientPie = null; }
+
+  const segs = [
+    { label: 'בוצעו',    value: st.done,      color: '#e85880' },
+    { label: 'עתידיים',  value: st.booked,    color: '#ff9ab5' },
+    { label: 'בוטלו',    value: st.cancelled, color: '#cfcfcf' },
+    { label: 'לא הגיעה', value: st.noShow,    color: '#c9966c' },
+  ].filter(s => s.value > 0);
+
+  if (!segs.length) {
+    canvas.style.display = 'none';
+    empty.style.display  = 'flex';
+    return;
+  }
+  canvas.style.display = 'block';
+  empty.style.display  = 'none';
+
+  const heebo = "'Heebo', sans-serif";
+  dash.charts.clientPie = new Chart(canvas, {
+    type: 'doughnut',
+    data: {
+      labels: segs.map(s => s.label),
+      datasets: [{
+        data: segs.map(s => s.value),
+        backgroundColor: segs.map(s => s.color),
+        borderColor: '#ffffff',
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      cutout: '58%',
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: { font: { family: heebo, size: 12 }, color: '#4a4a4a', padding: 12,
+                    usePointStyle: true, pointStyle: 'circle' },
+        },
+        tooltip: { bodyFont: { family: heebo }, titleFont: { family: heebo } },
+      },
+    },
+  });
+}
+
+function wireClientsControls() {
+  const search = document.getElementById('clients-search');
+  if (search) search.addEventListener('input', e => {
+    dash.clientsQuery = e.target.value;
+    renderClients();
+  });
+
+  const tbody = document.getElementById('clients-tbody');
+  if (tbody) tbody.addEventListener('click', e => {
+    const row = e.target.closest('.client-row');
+    if (!row) return;
+    const client = dash.clients.find(c => String(c.id) === row.dataset.clientId);
+    if (client) openClientModal(client);
+  });
+
+  const modal = document.getElementById('client-modal');
+  const close = document.getElementById('client-modal-close');
+  const hide  = () => { if (modal) modal.style.display = 'none'; };
+  if (close) close.addEventListener('click', hide);
+  if (modal) modal.addEventListener('click', e => { if (e.target === modal) hide(); });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && modal && modal.style.display === 'flex') hide();
+  });
 }
 
 async function adminCancel(id) {

@@ -171,6 +171,33 @@
         </div>
       </section>
 
+      <!-- ── Clients table ── -->
+      <section class="admin-section">
+        <div class="section-head">
+          <h2>לקוחות</h2>
+          <input type="search" id="clients-search" class="clients-search"
+                 placeholder="חיפוש לפי שם, טלפון או אימייל…" aria-label="חיפוש לקוחות" />
+        </div>
+        <p class="section-hint">לחצי על לקוחה לצפייה בפילוח התורים שלה.</p>
+        <div class="clients-table-wrap">
+          <table class="clients-table">
+            <thead>
+              <tr>
+                <th>שם</th>
+                <th>טלפון</th>
+                <th>אימייל</th>
+                <th>תור אחרון</th>
+                <th>התחברות אחרונה</th>
+                <th>תאריך הרשמה</th>
+              </tr>
+            </thead>
+            <tbody id="clients-tbody">
+              <tr><td colspan="6" class="clients-loading"><div class="spinner"></div><span>טוענת לקוחות…</span></td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+
     </main>
   </div>
 
@@ -193,6 +220,26 @@
 
       <p class="avail-feedback" id="resched-feedback"></p>
       <button class="admin-btn primary full" id="resched-save" disabled>שמירה ועדכון יומן</button>
+    </div>
+  </div>
+
+  <!-- ──────────────── CLIENT STATS MODAL ──────────────── -->
+  <div class="modal-overlay" id="client-modal" style="display:none;">
+    <div class="modal-card client-stats-card">
+      <button class="modal-close" id="client-modal-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title" id="client-modal-name"></h3>
+      <p class="modal-sub" id="client-modal-sub"></p>
+
+      <div class="client-stats-grid">
+        <div class="cstat"><span class="cstat-num" id="cstat-total">0</span><span class="cstat-label">סה״כ תורים</span></div>
+        <div class="cstat"><span class="cstat-num is-done" id="cstat-done">0</span><span class="cstat-label">בוצעו</span></div>
+        <div class="cstat"><span class="cstat-num is-cancelled" id="cstat-cancelled">0</span><span class="cstat-label">בוטלו</span></div>
+      </div>
+
+      <div class="client-chart-wrap">
+        <canvas id="client-pie"></canvas>
+        <p class="client-chart-empty" id="client-chart-empty" style="display:none;">אין עדיין תורים להצגה</p>
+      </div>
     </div>
   </div>
 
