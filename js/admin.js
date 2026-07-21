@@ -49,25 +49,42 @@ function waPhone(raw) {
   return '972' + d;
 }
 
+// Emojis are written as ASCII-only \u{…} escapes (not raw characters) so no
+// editor, deploy tool, or proxy in the chain can re-encode and corrupt them —
+// they were showing up as “�” in the delivered WhatsApp reminder. The runtime
+// string is byte-for-byte identical to the literal emoji.
+const EMO = {
+  heart:    '\u{1F495}',                          // 💕
+  polish:   '\u{1F485}\u{2728}',                  // 💅✨
+  calendar: '\u{1F4C5}',                          // 📅
+  clock:    '\u{23F0}',                           // ⏰
+  facial:   '\u{1F486}\u{200D}\u{2640}\u{FE0F}',  // 💆‍♀️
+  hourglass:'\u{23F3}',                           // ⏳
+  money:    '\u{1F4B0}',                          // 💰
+  pin:      '\u{1F4CD}',                          // 📍
+  parking:  '\u{1F17F}\u{FE0F}',                  // 🅿️
+  sparkH:   '\u{1F497}',                          // 💗
+};
+
 // A warm, on-brand reminder message carrying the appointment's details.
 function reminderText(appt) {
   const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
   const time = (appt.start_time || '').slice(0, 5);
   return [
-    `שלום ${appt.client_name} 💕`,
+    `שלום ${appt.client_name} ${EMO.heart}`,
     ``,
-    `רק תזכורת קטנה לתור שלך ב-Moriya Nails 💅✨`,
+    `רק תזכורת קטנה לתור שלך ב-Moriya Nails ${EMO.polish}`,
     ``,
-    `📅 ${dowLabel(appt.date)} · ${fmtDate(appt.date)}`,
-    `⏰ ${time}`,
-    `💆‍♀️ ${svc}`,
-    `⏳ משך משוער: ${appt.duration_min} דק׳`,
-    `💰 לתשלום: ${ils(Number(appt.total_price || 0))}`,
+    `${EMO.calendar} ${dowLabel(appt.date)} · ${fmtDate(appt.date)}`,
+    `${EMO.clock} ${time}`,
+    `${EMO.facial} ${svc}`,
+    `${EMO.hourglass} משך משוער: ${appt.duration_min} דק׳`,
+    `${EMO.money} לתשלום: ${ils(Number(appt.total_price || 0))}`,
     ``,
-    `📍 ${VENUE_ADDR}`,
-    `🅿️ הגעה וחניה: ${VENUE_MAPS}`,
+    `${EMO.pin} ${VENUE_ADDR}`,
+    `${EMO.parking} הגעה וחניה: ${VENUE_MAPS}`,
     ``,
-    `מחכה לראות אותך 💗`,
+    `מחכה לראות אותך ${EMO.sparkH}`,
   ].join('\n');
 }
 
