@@ -319,10 +319,25 @@ ul { list-style: none; }
   animation: floatLogo 4s ease-in-out infinite;
 }
 .hero-logo-img {
-  width: clamp(220px, 60vw, 320px);
+  width: clamp(180px, 44vw, 240px);
   height: auto;
   border-radius: var(--radius-md);
   display: block;
+}
+
+.hero-welcome {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  max-width: 560px;
+  color: var(--gray-600);
+  font-size: 1.05rem;
+  line-height: 1.85;
+}
+.hero-welcome-title {
+  font-size: 1.35rem;
+  font-weight: 700;
+  color: var(--gray-800);
 }
 @keyframes floatLogo {
   0%, 100% { transform: translateY(0); }
@@ -423,6 +438,12 @@ ul { list-style: none; }
 .about-card p {
   font-size: 0.88rem;
   color: var(--gray-600);
+}
+.about-card p small {
+  display: inline-block;
+  margin-top: 6px;
+  font-size: 0.78rem;
+  color: var(--gray-400);
 }
 
 @media (max-width: 900px) {
