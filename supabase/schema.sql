@@ -22,8 +22,17 @@ create table if not exists public.profiles (
   email       text,
   full_name   text,
   phone       text,
-  created_at  timestamptz default now()
+  created_at  timestamptz default now(),
+  -- Last successful login, synced from auth.users.last_sign_in_at (see trigger below).
+  last_login  timestamptz,
+  -- The client's most relevant appointment: their upcoming one, or — if none —
+  -- the last one that actually happened. Cancelled/no-show are ignored.
+  -- Maintained automatically by a trigger on `appointments` (see below).
+  last_appointment timestamptz
 );
+-- Add the columns on databases created before they existed.
+alter table public.profiles add column if not exists last_login       timestamptz;
+alter table public.profiles add column if not exists last_appointment timestamptz;
 
 -- Auto-create a profile row whenever a new user signs up with Google
 create or replace function public.handle_new_user()
@@ -47,6 +56,35 @@ drop trigger if exists on_auth_user_created on auth.users;
 create trigger on_auth_user_created
   after insert on auth.users
   for each row execute function public.handle_new_user();
+
+-- Keep profiles.last_login in sync with Supabase's own auth.users.last_sign_in_at,
+-- which the platform updates automatically on every successful login. This is the
+-- authoritative source, so no client-side code is needed and existing users are
+-- populated immediately by the backfill below.
+create or replace function public.sync_last_login()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  update public.profiles
+  set last_login = new.last_sign_in_at
+  where id = new.id;
+  return new;
+end;
+$$;
+
+drop trigger if exists on_auth_user_login on auth.users;
+create trigger on_auth_user_login
+  after update of last_sign_in_at on auth.users
+  for each row
+  when (new.last_sign_in_at is distinct from old.last_sign_in_at)
+  execute function public.sync_last_login();
+
+-- Backfill last_login for users who already signed in before this trigger existed.
+update public.profiles p
+set last_login = u.last_sign_in_at
+from auth.users u
+where u.id = p.id;
 
 -- ============================================================
 --  2) AVAILABILITY – working windows & breaks (admin-managed)
@@ -90,6 +128,63 @@ create table if not exists public.appointments (
 );
 create index if not exists idx_appointments_date on public.appointments(date);
 create index if not exists idx_appointments_user on public.appointments(user_id);
+
+-- ============================================================
+--  LAST APPOINTMENT – keep profiles.last_appointment in sync
+--  Definition: the latest appointment (date + time) among a user's
+--  'booked' (upcoming) or 'done' (already happened) appointments.
+--  Cancelled and no-show appointments are excluded. Times are read as
+--  Israel local wall-time and stored as a proper timestamptz.
+-- ============================================================
+create or replace function public.refresh_last_appointment(p_user uuid)
+returns void
+language sql security definer set search_path = public
+as $$
+  update public.profiles p
+  set last_appointment = (
+    select max((a.date + a.start_time) at time zone 'Asia/Jerusalem')
+    from public.appointments a
+    where a.user_id = p_user
+      and a.status in ('booked', 'done')
+  )
+  where p.id = p_user;
+$$;
+
+-- Recompute for the affected user(s) on any insert/update/delete.
+create or replace function public.appointments_touch_last()
+returns trigger
+language plpgsql security definer set search_path = public
+as $$
+begin
+  if (tg_op = 'DELETE') then
+    perform public.refresh_last_appointment(old.user_id);
+    return old;
+  end if;
+  perform public.refresh_last_appointment(new.user_id);
+  -- If the appointment was reassigned to another user, refresh the old one too.
+  if (tg_op = 'UPDATE' and old.user_id is distinct from new.user_id) then
+    perform public.refresh_last_appointment(old.user_id);
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_appointments_last on public.appointments;
+create trigger trg_appointments_last
+  after insert or update or delete on public.appointments
+  for each row execute function public.appointments_touch_last();
+
+-- One-time backfill for appointments that already exist.
+update public.profiles p
+set last_appointment = sub.last_appt
+from (
+  select user_id,
+         max((date + start_time) at time zone 'Asia/Jerusalem') as last_appt
+  from public.appointments
+  where status in ('booked', 'done') and user_id is not null
+  group by user_id
+) sub
+where p.id = sub.user_id;
 
 -- ============================================================
 --  ROW LEVEL SECURITY
@@ -141,5 +236,31 @@ create policy "appointments_admin_delete" on public.appointments
   for delete using (public.is_admin());
 
 -- ============================================================
+--  CLIENTS REPORT – one readable row per client
+--  View it any time:  select * from public.clients_report;
+--  security_invoker keeps the underlying RLS in force, so only an
+--  admin sees every client (a client querying it sees only themselves).
+-- ============================================================
+create or replace view public.clients_report
+with (security_invoker = true) as
+select
+  p.full_name                                              as "שם",
+  p.phone                                                  as "טלפון",
+  p.email                                                  as "אימייל",
+  -- Times are truncated to whole seconds (no sub-second digits) for readability.
+  date_trunc('second', p.created_at)                       as "נרשם/ה",
+  date_trunc('second', p.last_login)                       as "התחברות אחרונה",
+  date_trunc('second', p.last_appointment)                 as "תור אחרון",
+  count(a.id) filter (where a.status in ('booked','done')) as "סה""כ תורים",
+  count(a.id) filter (where a.status = 'done')             as "בוצעו",
+  count(a.id) filter (where a.status = 'cancelled')        as "בוטלו",
+  p.id                                                     as "user_id"
+from public.profiles p
+left join public.appointments a on a.user_id = p.id
+group by p.id
+order by p.last_appointment desc nulls last;
+
+-- ============================================================
 --  Done. Tables: profiles, availability, appointments.
+--  View: clients_report.
 -- ============================================================
