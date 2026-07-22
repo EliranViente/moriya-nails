@@ -395,7 +395,13 @@ const SLOT_LEN = 90; // minutes per bookable appointment slot (standard treatmen
 // instead of the 90-min cadence, so quick visits don't waste a full slot.
 const SHORT_SLOT_LEN = 30;
 const SHORT_TREATMENT_MAX = 35; // durations strictly under this use the 30-min grid
-const DEFAULT_FRIDAY_OPEN = [{ start: 9 * 60, end: 17 * 60 }]; // 09:00–17:00
+// Default Friday: 09:00–17:30 with two standing breaks (10:30–11:15 and
+// 14:15–14:30), which yields five 90-min slots — 09:00 · 11:15 · 12:45 · 14:30 · 16:00.
+const DEFAULT_FRIDAY_OPEN  = [{ start: 9 * 60, end: 17 * 60 + 30 }];          // 09:00–17:30
+const DEFAULT_FRIDAY_BLOCK = [
+  { start: 10 * 60 + 30, end: 11 * 60 + 15 },   // 10:30–11:15
+  { start: 14 * 60 + 15, end: 14 * 60 + 30 },   // 14:15–14:30
+];
 const padNum   = n => String(n).padStart(2, '0');
 const hhmmToMin = hhmm => { const [h, m] = hhmm.slice(0, 5).split(':').map(Number); return h * 60 + m; };
 const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
@@ -438,11 +444,23 @@ function effectiveOpenWindows(dateStr, info) {
   return isFridayStr(dateStr) ? DEFAULT_FRIDAY_OPEN.map(w => ({ ...w })) : [];
 }
 
+// A Friday runs on the default schedule (and so carries the default break) when
+// it isn't closed and the admin hasn't set explicit open windows for it.
+function usesDefaultFriday(dateStr, info) {
+  if (info && info.closed) return false;
+  if (info && info.open && info.open.length) return false;
+  return isFridayStr(dateStr);
+}
+
 async function getDayWindows(dateStr) {
   const [y, m] = dateStr.split('-').map(Number);
   const byDate = await getMonthAvailability(y, m - 1);
   const info   = byDate.get(dateStr) || { open: [], block: [], closed: false };
-  return { open: effectiveOpenWindows(dateStr, info), block: info.block || [] };
+  const block  = [...(info.block || [])];
+  if (usesDefaultFriday(dateStr, info)) {
+    DEFAULT_FRIDAY_BLOCK.forEach(b => block.push({ ...b }));
+  }
+  return { open: effectiveOpenWindows(dateStr, info), block };
 }
 
 // Busy intervals for a day, cached so the calendar can check every open day

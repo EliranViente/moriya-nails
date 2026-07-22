@@ -187,7 +187,7 @@ async function initDashboard() {
   const [y, m] = adminSelDate.split('-').map(Number);
   adminCalYear = y; adminCalMonth = m - 1;
   setEditorTime('start', '09:00');
-  setEditorTime('end', '17:00');
+  setEditorTime('end', '17:30');
   await renderAdminCalendar();
   selectAdminDate(adminSelDate);
 }
@@ -200,8 +200,13 @@ function nextFridayStr() {
 
 // ─── Availability calendar ────────────────────────────────────────────────────
 // Per-day model (mirrors the public site): Fridays are work days by default
-// (09:00–17:00); the admin can open other days, add breaks, or mark a day closed.
-const DEFAULT_FRIDAY = [{ start: 9 * 60, end: 17 * 60 }]; // 09:00–17:00
+// (09:00–17:30 with standing 10:30–11:15 and 14:15–14:30 breaks → five slots);
+// the admin can open other days, add breaks, or mark a day closed.
+const DEFAULT_FRIDAY       = [{ start: 9 * 60, end: 17 * 60 + 30 }];       // 09:00–17:30
+const DEFAULT_FRIDAY_BLOCK = [
+  { start: 10 * 60 + 30, end: 11 * 60 + 15 },   // 10:30–11:15
+  { start: 14 * 60 + 15, end: 14 * 60 + 30 },   // 14:15–14:30
+];
 const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
 
 // The effective open windows for a day, applying the Friday default.
@@ -546,7 +551,12 @@ async function loadDayWindows(date) {
   const closed   = dashDayRows.some(r => r.kind === 'closed');
   const openRows = dashDayRows.filter(r => r.kind === 'open');
   const blockRows = dashDayRows.filter(r => r.kind === 'block');
-  dashDayBlocks = blockRows.map(w => ({ start: toMin(w.start_time.slice(0, 5)), end: toMin(w.end_time.slice(0, 5)) }));
+  // Fridays on the default schedule carry the standing 10:30–11:15 break.
+  const usingDefaultFri = !closed && openRows.length === 0 && isFridayStr(date);
+  dashDayBlocks = [
+    ...blockRows.map(w => ({ start: toMin(w.start_time.slice(0, 5)), end: toMin(w.end_time.slice(0, 5)) })),
+    ...(usingDefaultFri ? DEFAULT_FRIDAY_BLOCK.map(b => ({ ...b })) : [])
+  ];
   updateAvailPreview();   // preview now reflects this day's breaks
 
   // Day explicitly marked closed.
@@ -559,11 +569,11 @@ async function loadDayWindows(date) {
     return;
   }
 
-  // Effective work windows: explicit rows, or the Friday default (09:00–17:00).
+  // Effective work windows: explicit rows, or the Friday default (09:00–17:30).
   const usingDefault = openRows.length === 0 && isFridayStr(date);
   const openWins = openRows.length
     ? openRows.map(r => ({ id: r.id, s: toMin(r.start_time.slice(0, 5)), e: toMin(r.end_time.slice(0, 5)), range: `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}` }))
-    : (usingDefault ? [{ id: null, s: 9 * 60, e: 17 * 60, range: '09:00–17:00' }] : []);
+    : (usingDefault ? [{ id: null, s: 9 * 60, e: 17 * 60 + 30, range: '09:00–17:30' }] : []);
 
   if (!openWins.length && !blockRows.length) {
     list.innerHTML = `${note}<p class="avail-empty">אין שעות עבודה ליום זה.<br/>הוסיפי חלון עבודה כדי לפתוח תורים.</p>`;
@@ -592,6 +602,17 @@ async function loadDayWindows(date) {
       <button class="win-del" data-id="${r.id}">מחיקה</button>
     </div>`;
   }).join('');
+
+  // The default Friday break (shown for context; part of the default schedule).
+  if (usingDefaultFri) {
+    rowsHtml += DEFAULT_FRIDAY_BLOCK.map(b => `
+      <div class="avail-win block">
+        <div class="win-info">
+          <span class="win-badge block">⛔ הפסקה</span><strong>${fromMin(b.start)}–${fromMin(b.end)}</strong>
+          <span class="win-default">ברירת מחדל (שישי)</span>
+        </div>
+      </div>`).join('');
+  }
 
   list.innerHTML = rowsHtml;
   delDayBtn.style.display = openWins.length ? '' : 'none';
