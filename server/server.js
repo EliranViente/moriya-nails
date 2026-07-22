@@ -119,7 +119,8 @@ app.post('/api/book', async (req, res) => {
 // Local parity with the Netlify function: cancel or reschedule a calendar event.
 // (The local dev server is trusted, so it skips the Supabase ownership check.)
 app.post('/api/manage-booking', async (req, res) => {
-  const { action, eventId, date, time, duration } = req.body;
+  const { action, eventId, date, time, duration,
+          services, totalPrice, clientName, clientPhone, notes } = req.body;
   if (!action || !eventId) {
     return res.status(400).json({ error: 'Missing action or eventId' });
   }
@@ -149,6 +150,20 @@ app.post('/api/manage-booking', async (req, res) => {
 
       const patchBody = { start: { dateTime: startLocal, timeZone: TZ } };
       if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };
+
+      // Refresh the title/description when extra services were added on update.
+      if (Array.isArray(services) && services.length && clientName) {
+        const serviceNames = services.map(s => s.name).join(', ');
+        patchBody.summary     = `💅 ${clientName} – ${serviceNames}`;
+        patchBody.description = [
+          `👩 לקוחה: ${clientName}`,
+          `📞 טלפון: ${clientPhone}`,
+          `💅 טיפולים: ${serviceNames}`,
+          `⏱ זמן: ${dur} דקות`,
+          `💰 מחיר: ${totalPrice} ₪`,
+          notes ? `📝 הערות: ${notes}` : ''
+        ].filter(Boolean).join('\n');
+      }
 
       await calendar.events.patch({ calendarId: CALENDAR_ID, eventId, requestBody: patchBody });
       return res.json({ success: true });

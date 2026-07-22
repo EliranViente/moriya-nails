@@ -32,6 +32,35 @@ const state = {
 // instead of creating a new one.
 let editingAppointment = null;
 
+// Add-ons a client may add to / remove from an existing appointment while
+// rescheduling. Only the base treatment (gel polish / anatomic structure) stays
+// locked – every add-on is editable, and the changes sync to Moriya's calendar
+// on update. The `name` fields match the booking flow exactly so add-ons already
+// on the appointment map back onto these controls (pre-filled and removable).
+// `time`/`price` are per-unit; quantity rows multiply by the chosen count.
+const RESCHEDULE_EXTRAS = [
+  { id: 'double',  emoji: '💎', name: 'שתי שכבות בייס / אבקת אקריל',              desc: 'חיזוק נוסף לציפורניים',                        type: 'checkbox', time: 15, price: 20 },
+  { id: 'french',  emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי / מעבר אומברה עדין', desc: 'פרנץ׳ קלאסי או מעבר אומברה עדין',              type: 'checkbox', time: 15, price: 20 },
+  { id: 'deco',    emoji: '🎨', name: 'קישוט',                                   desc: 'המחיר (5–40 ₪) ייקבע בתור לפי העיצוב',         type: 'checkbox', time: 10, price: 0, priceLabel: '5–40 ₪ (ייקבע בתור)' },
+  { id: 'polygel', emoji: '🔧', name: "השלמת ציפורן בטיפס ג'ל",                  desc: 'השלמת ציפורן שנשברה · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
+  { id: 'crack',   emoji: '🩹', name: 'תיקון סדק בציפורן',                       desc: 'תיקון מהיר לסדק · 5 ₪ ו-5 דק׳ לציפורן',       type: 'quantity', time: 5,  price: 5  },
+  { id: 'pincer',  emoji: '📐', name: 'תיקון מבנה נשרי לציפורן',                 desc: 'החזרת מבנה ישר לציפורן · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
+  { id: 'toolkit', emoji: '💼', name: 'סט כלים אישי',                            desc: 'סט כלים אישי הנשמר על שמך לטיפולים הבאים',      type: 'checkbox', time: 0,  price: 30 },
+];
+
+// Extras chosen for the current reschedule, in the same {name,time,price} shape
+// as the booking flow so they can be merged straight back onto the appointment.
+let rescheduleExtras = [];
+
+// The locked part of the appointment being rescheduled (the base manicure plus
+// any service that doesn't map to an editable add-on). Its time/price form the
+// floor that the editable extras are added on top of.
+let rescheduleBase = { services: [], time: 0, price: 0 };
+
+// Pre-fill state for the extras controls, derived from the appointment's current
+// add-ons: { [extraId]: true } for checkboxes, { [extraId]: qty } for quantities.
+let reschedulePrefill = {};
+
 // ─── Navbar scroll effect ─────────────────────────────────────────────────────
 const navbar = document.getElementById('navbar');
 window.addEventListener('scroll', () => {
@@ -243,13 +272,20 @@ function updateBookingSummary() {
 
   let treatments, duration, price;
   if (editingAppointment) {
-    // Rescheduling an existing appointment – reflect its own details.
-    const svc = (editingAppointment.services || []).map(s => s.name);
+    // Rescheduling an existing appointment – reflect the locked base plus the
+    // add-ons currently selected (which the client can add to or remove).
+    const svc = [
+      ...rescheduleBase.services.map(s => s.name),
+      ...rescheduleExtras.map(e => e.name)
+    ];
     treatments = svc.length
       ? (svc.length <= 2 ? svc.join(' + ') : `${svc[0]} +${svc.length - 1} תוספות`)
       : "מניקור לק ג'ל";
-    duration = formatDuration(editingAppointment.duration_min);
-    price    = editingAppointment.total_price + ' ₪';
+    const newDuration = rescheduleBase.time  + extrasTotalTime();
+    const newPrice    = rescheduleBase.price + extrasTotalPrice();
+    const hasDeco     = rescheduleExtras.some(e => e.priceLabel);
+    duration = formatDuration(newDuration);
+    price    = newPrice + ' ₪' + (hasDeco ? ' + קישוט' : '');
   } else {
     if (!state.totalTime) { bar.style.display = 'none'; return; }
     // On step 1 stay hidden until the client adds something beyond the default
@@ -425,6 +461,28 @@ async function getBusySlots(dateStr) {
   return busy;
 }
 
+// Remove [s,e) from a list of busy intervals, splitting any interval it cuts
+// through. Used so an appointment's own slot doesn't count as busy against
+// itself while rescheduling (otherwise its current time would look taken).
+function subtractInterval(busy, s, e) {
+  const out = [];
+  (busy || []).forEach(b => {
+    if (e <= b.start || s >= b.end) { out.push(b); return; }  // no overlap
+    if (s > b.start) out.push({ start: b.start, end: s });
+    if (e < b.end)   out.push({ start: e,       end: b.end });
+  });
+  return out;
+}
+
+// On the appointment's own date during a reschedule, free up its current slot so
+// the client can keep the same time (and so it stays selectable after changes).
+function carveOwnAppointment(dateStr, busy) {
+  if (!editingAppointment || dateStr !== editingAppointment.date) return busy;
+  const [h, m] = (editingAppointment.start_time || '00:00').split(':').map(Number);
+  const s = h * 60 + m;
+  return subtractInterval(busy, s, s + (editingAppointment.duration_min || 0));
+}
+
 async function renderCalendar() {
   const box    = document.getElementById('calendar-box');
   const today  = new Date();
@@ -480,7 +538,7 @@ async function renderCalendar() {
   const fullDates = new Set();
   await Promise.all(dayMeta.filter(m => m.candidate).map(async m => {
     const wins    = await getDayWindows(m.dateStr);
-    const busy    = await getBusySlots(m.dateStr);
+    const busy    = carveOwnAppointment(m.dateStr, await getBusySlots(m.dateStr));
     const hasFree = buildAvailableSlots(state.totalTime, busy, m.dateStr, wins).some(s => !s.busy);
     if (!hasFree) fullDates.add(m.dateStr);
   }));
@@ -578,6 +636,7 @@ async function loadTimeSlots(dateStr) {
     } catch (e) { /* on error, allow booking */ }
   }
 
+  busySlots = carveOwnAppointment(dateStr, busySlots);
   const dayWindows = await getDayWindows(dateStr);
   const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr, dayWindows);
   renderSlots(slots, slotsGrid);
@@ -651,7 +710,15 @@ function renderSlots(slots, container) {
     </div>`;
   }).join('');
 
+  // Re-apply an existing selection: after a duration change the grid is rebuilt,
+  // and if the chosen time still fits we keep it selected so the client can
+  // update straight away without re-picking.
+  let selectionSurvived = false;
   container.querySelectorAll('.time-slot:not(.busy)').forEach(el => {
+    if (state.selectedTime && el.dataset.time === state.selectedTime) {
+      el.classList.add('selected');
+      selectionSurvived = true;
+    }
     el.addEventListener('click', () => {
       container.querySelectorAll('.time-slot').forEach(e => e.classList.remove('selected'));
       el.classList.add('selected');
@@ -660,6 +727,11 @@ function renderSlots(slots, container) {
       updateBookingSummary();
     });
   });
+
+  if (!selectionSurvived) state.selectedTime = null;
+  const go = document.getElementById('go-step3');
+  if (go) go.disabled = !state.selectedTime;
+  updateBookingSummary();
 }
 
 // ─── Nearest available appointment ────────────────────────────────────────────
@@ -1160,12 +1232,31 @@ function startReschedule(id, appts) {
   const appt = appts.find(a => String(a.id) === String(id));
   if (!appt) return;
   editingAppointment   = appt;
+  rescheduleExtras     = [];
+  // Lock the base treatment; surface the current add-ons as editable extras.
+  const split          = splitReschedule(appt);
+  rescheduleBase       = { services: split.base, time: split.time, price: split.price };
+  reschedulePrefill    = split.prefill;
   state.totalTime      = appt.duration_min;
-  state.selectedDate   = null;
-  state.selectedTime   = null;
+  // Pre-select the appointment's current date & time so the client can update
+  // right away (e.g. only adding an extra, keeping the same slot). Its own slot
+  // is freed up by carveOwnAppointment so it shows as available and selectable.
+  state.selectedDate   = appt.date;
+  state.selectedTime   = (appt.start_time || '').slice(0, 5) || null;
+  const [aY, aM]       = appt.date.split('-').map(Number);
+  calYear = aY; calMonth = aM - 1;
 
   const modal = document.getElementById('appts-modal');
   if (modal) modal.style.display = 'none';
+
+  // Prepare the "add extras" panel (collapsed by default).
+  const extrasWrap = document.getElementById('reschedule-extras');
+  const rxPanel    = document.getElementById('rx-panel');
+  const rxToggle   = document.getElementById('rx-toggle');
+  if (extrasWrap) extrasWrap.style.display = 'block';
+  if (rxPanel)    rxPanel.style.display    = 'none';
+  if (rxToggle) { rxToggle.setAttribute('aria-expanded', 'false'); rxToggle.classList.remove('open'); }
+  renderRescheduleExtras();
 
   // Switch the booking card into reschedule mode: hide the 1-2-3 step bar
   // (only the date/time changes) and surface the appointment being moved.
@@ -1180,8 +1271,8 @@ function startReschedule(id, appts) {
   }
   const title = document.getElementById('step2-title');
   const hint  = document.getElementById('step2-hint');
-  if (title) title.textContent = 'בחרי מועד חדש';
-  if (hint)  hint.textContent  = '📅 בחרי יום ושעה פנויים למועד החדש';
+  if (title) title.textContent = 'עדכון התור';
+  if (hint)  hint.textContent  = '📅 אפשר לשנות מועד ו/או להוסיף תוספות, ואז לעדכן';
 
   const next = document.getElementById('go-step3');
   if (next) { next.textContent = 'עדכני תור ✓'; next.disabled = true; }
@@ -1190,14 +1281,24 @@ function startReschedule(id, appts) {
 
   showStep(2);
   renderCalendar();
+  // Render the slots for the current date; renderSlots re-selects the current
+  // time and enables the update button.
+  if (state.selectedDate) loadTimeSlots(state.selectedDate);
 }
 
 // Leave reschedule mode and restore the normal booking UI.
 function exitRescheduleMode() {
   editingAppointment = null;
+  rescheduleExtras   = [];
+  rescheduleBase     = { services: [], time: 0, price: 0 };
+  reschedulePrefill  = {};
   document.querySelector('.booking-card')?.classList.remove('reschedule-mode');
   const banner = document.getElementById('reschedule-banner');
   if (banner) banner.style.display = 'none';
+  const extrasWrap = document.getElementById('reschedule-extras');
+  if (extrasWrap) extrasWrap.style.display = 'none';
+  const rxPanel = document.getElementById('rx-panel');
+  if (rxPanel) rxPanel.style.display = 'none';
   const title = document.getElementById('step2-title');
   const hint  = document.getElementById('step2-hint');
   if (title) title.textContent = 'בחרי תאריך ושעה';
@@ -1208,10 +1309,185 @@ function exitRescheduleMode() {
   if (next) { next.textContent = 'המשיכי לפרטים ←'; next.disabled = true; }
 }
 
+// ─── Reschedule extras (add-ons on an existing appointment) ───────────────────
+function extrasTotalTime()  { return rescheduleExtras.reduce((s, e) => s + e.time,  0); }
+function extrasTotalPrice() { return rescheduleExtras.reduce((s, e) => s + e.price, 0); }
+
+// Split an appointment's services into the locked base (the manicure and any
+// service that doesn't map to an editable add-on) and a pre-fill map for the
+// extras controls. Quantity add-ons are stored as "<name> (×N)".
+function splitReschedule(appt) {
+  const base = [];
+  const prefill = {};
+  (appt.services || []).forEach(svc => {
+    const q = /^(.+?)\s*\(×(\d+)\)\s*$/.exec(svc.name || '');
+    if (q) {
+      const cat = RESCHEDULE_EXTRAS.find(x => x.type === 'quantity' && x.name === q[1].trim());
+      if (cat) { prefill[cat.id] = (prefill[cat.id] || 0) + (parseInt(q[2], 10) || 0); return; }
+    } else {
+      const cat = RESCHEDULE_EXTRAS.find(x => x.type === 'checkbox' && x.name === svc.name);
+      if (cat) { prefill[cat.id] = true; return; }
+    }
+    base.push(svc); // unmatched (e.g. the base manicure) → stays locked
+  });
+  const time  = base.reduce((s, x) => s + (x.time  || 0), 0);
+  const price = base.reduce((s, x) => s + (x.price || 0), 0);
+  return { base, time, price, prefill };
+}
+
+// Build the extras panel and wire its controls. The base treatment is shown
+// read-only; only the RESCHEDULE_EXTRAS add-ons are selectable.
+function renderRescheduleExtras() {
+  const list = document.getElementById('rx-list');
+  if (!list || !editingAppointment) return;
+
+  const lockedSvc = document.getElementById('rx-locked-svc');
+  if (lockedSvc) {
+    const names = rescheduleBase.services.map(s => s.name);
+    lockedSvc.textContent = names.length ? names.join(' · ') : "מניקור לק ג'ל";
+  }
+
+  list.innerHTML = RESCHEDULE_EXTRAS.map(x => {
+    if (x.type === 'checkbox') {
+      const priceText = x.priceLabel ? x.priceLabel : `+${x.price} ₪`;
+      return `
+        <label class="rx-row" data-id="${x.id}">
+          <input type="checkbox" class="rx-check" data-id="${x.id}" />
+          <span class="rx-box"></span>
+          <span class="rx-emoji">${x.emoji}</span>
+          <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc}</span></span>
+          <span class="rx-nums"><span class="rx-time">+${x.time} דק'</span><span class="rx-price">${priceText}</span></span>
+        </label>`;
+    }
+    return `
+      <div class="rx-row" data-id="${x.id}">
+        <span class="rx-emoji">${x.emoji}</span>
+        <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc}</span></span>
+        <span class="rx-qty">
+          <button type="button" class="rx-qty-btn minus" data-id="${x.id}">−</button>
+          <input type="number" class="rx-qty-input" data-id="${x.id}" value="0" min="0" max="10" />
+          <button type="button" class="rx-qty-btn plus" data-id="${x.id}">+</button>
+        </span>
+      </div>`;
+  }).join('');
+
+  // Pre-fill the controls with the add-ons already on the appointment so the
+  // client sees them here and can adjust or remove them.
+  Object.entries(reschedulePrefill).forEach(([id, val]) => {
+    const cb = list.querySelector(`.rx-check[data-id="${id}"]`);
+    if (cb) { cb.checked = true; return; }
+    const inp = list.querySelector(`.rx-qty-input[data-id="${id}"]`);
+    if (inp) inp.value = Math.max(0, Math.min(parseInt(inp.max) || 10, val));
+  });
+
+  list.querySelectorAll('.rx-check').forEach(cb =>
+    cb.addEventListener('change', recalcRescheduleExtras));
+  list.querySelectorAll('.rx-qty-input').forEach(inp =>
+    inp.addEventListener('input', () => {
+      let v = parseInt(inp.value) || 0;
+      const max = parseInt(inp.max) || 10;
+      if (v < 0) v = 0;
+      if (v > max) v = max;
+      inp.value = v;
+      recalcRescheduleExtras();
+    }));
+  list.querySelectorAll('.rx-qty-btn').forEach(btn =>
+    btn.addEventListener('click', () => {
+      const inp = list.querySelector(`.rx-qty-input[data-id="${btn.dataset.id}"]`);
+      if (!inp) return;
+      let v = parseInt(inp.value) || 0;
+      const max = parseInt(inp.max) || 10;
+      if (btn.classList.contains('plus')  && v < max) v++;
+      if (btn.classList.contains('minus') && v > 0)   v--;
+      inp.value = v;
+      recalcRescheduleExtras();
+    }));
+
+  recalcRescheduleExtras();
+}
+
+// Recompute the chosen extras, refresh the mini-summary, and – when the total
+// duration changed – reload the time slots so availability reflects the longer
+// appointment (a previously-picked time may no longer fit).
+function recalcRescheduleExtras() {
+  const list = document.getElementById('rx-list');
+  if (!list || !editingAppointment) return;
+
+  const extras = [];
+  RESCHEDULE_EXTRAS.forEach(x => {
+    if (x.type === 'checkbox') {
+      const cb  = list.querySelector(`.rx-check[data-id="${x.id}"]`);
+      const row = cb && cb.closest('.rx-row');
+      if (cb && cb.checked) {
+        const e = { name: x.name, time: x.time, price: x.price };
+        if (x.priceLabel) e.priceLabel = x.priceLabel;
+        extras.push(e);
+        row && row.classList.add('checked');
+      } else if (row) {
+        row.classList.remove('checked');
+      }
+    } else {
+      const inp = list.querySelector(`.rx-qty-input[data-id="${x.id}"]`);
+      const row = inp && inp.closest('.rx-row');
+      const qty = Math.max(0, parseInt(inp && inp.value) || 0);
+      if (qty > 0) {
+        extras.push({ name: `${x.name} (×${qty})`, time: qty * x.time, price: qty * x.price });
+        row && row.classList.add('checked');
+      } else if (row) {
+        row.classList.remove('checked');
+      }
+    }
+  });
+  rescheduleExtras = extras;
+
+  // Keep state.totalTime in sync so renderCalendar/loadTimeSlots size the slots
+  // for the (possibly longer or shorter) appointment.
+  const prevTime = state.totalTime;
+  const newTime  = rescheduleBase.time + extrasTotalTime();
+  state.totalTime = newTime;
+
+  const sum = document.getElementById('rx-summary');
+  if (sum) {
+    const newPrice = rescheduleBase.price + extrasTotalPrice();
+    const hasDeco  = extras.some(e => e.priceLabel);
+    sum.style.display = 'flex';
+    sum.innerHTML = `
+      <span class="rx-sum-label">סה״כ מעודכן</span>
+      <span class="rx-sum-vals"><strong>${formatDuration(newTime)}</strong> · <strong>${newPrice} ₪${hasDeco ? ' + קישוט' : ''}</strong></span>`;
+  }
+
+  updateBookingSummary();
+
+  // The appointment length changed → refresh availability. loadTimeSlots →
+  // renderSlots keeps the current time selected if it still fits (so the update
+  // button stays enabled) and only clears it when the slot no longer works.
+  if (newTime !== prevTime) {
+    renderCalendar();
+    if (state.selectedDate) loadTimeSlots(state.selectedDate);
+  }
+}
+
+// Expand / collapse the extras panel.
+document.getElementById('rx-toggle')?.addEventListener('click', () => {
+  const panel = document.getElementById('rx-panel');
+  const btn   = document.getElementById('rx-toggle');
+  if (!panel || !btn) return;
+  const open = panel.style.display !== 'none';
+  panel.style.display = open ? 'none' : 'block';
+  btn.setAttribute('aria-expanded', String(!open));
+  btn.classList.toggle('open', !open);
+});
+
 async function updateAppointment() {
   if (!editingAppointment) return;
   const btn = document.getElementById('go-step3');
   if (btn) { btn.disabled = true; btn.textContent = 'מעדכנת…'; }
+
+  // The base treatment is locked; the editable extras are re-attached on top, so
+  // additions and removals both flow through to the calendar and Supabase.
+  const mergedServices = [...rescheduleBase.services, ...rescheduleExtras];
+  const newDuration    = rescheduleBase.time  + extrasTotalTime();
+  const newPrice       = rescheduleBase.price + extrasTotalPrice();
 
   try {
     // 1) Move the matching event on Google Calendar.
@@ -1225,26 +1501,37 @@ async function updateAppointment() {
           eventId:  editingAppointment.google_event_id,
           date:     state.selectedDate,
           time:     state.selectedTime,
-          duration: editingAppointment.duration_min,
+          duration: newDuration,
+          // Always resend the treatment list so the event title/description stay
+          // in sync whether the client added or removed an extra.
+          services:    mergedServices,
+          totalPrice:  newPrice,
+          clientName:  editingAppointment.client_name,
+          clientPhone: editingAppointment.client_phone,
+          notes:       editingAppointment.notes || '',
           accessToken
         })
       });
     }
-    // 2) Update the appointment in Supabase.
-    await MoriyaAuth.sb.from('appointments')
-      .update({ date: state.selectedDate, start_time: state.selectedTime })
-      .eq('id', editingAppointment.id);
+    // 2) Persist the new time, treatment list, duration and price in Supabase.
+    await MoriyaAuth.sb.from('appointments').update({
+      date:         state.selectedDate,
+      start_time:   state.selectedTime,
+      duration_min: newDuration,
+      total_price:  newPrice,
+      services:     mergedServices
+    }).eq('id', editingAppointment.id);
   } catch (e) { console.warn('update failed:', e.message); }
 
-  const svc = (editingAppointment.services || []).map(s => s.name);
+  const svc = mergedServices.map(s => s.name);
   const treatments = svc.length ? svc : ["מניקור לק ג'ל"];
   renderSuccessCard({
     heading:    'התור עודכן בהצלחה!',
-    subtitle:   'המועד החדש נשמר ביומן של מוריה. נתראה! 💅',
+    subtitle:   'המועד עודכן ונשמר ביומן של מוריה. נתראה! 💅',
     treatments,
-    duration:       formatDuration(editingAppointment.duration_min),
-    durationMinutes: editingAppointment.duration_min,
-    price:      `${editingAppointment.total_price} ₪`
+    duration:        formatDuration(newDuration),
+    durationMinutes: newDuration,
+    price:      `${newPrice} ₪`
   });
 
   exitRescheduleMode();

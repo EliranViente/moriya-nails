@@ -18,6 +18,21 @@ const { google } = require('googleapis');
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
 
+// Rebuild the event summary/description from appointment details – kept in sync
+// with /api/book so a rescheduled appointment reads identically on the calendar.
+function buildEventFields({ clientName, clientPhone, services, duration, totalPrice, notes }) {
+  const serviceNames = (services || []).map(s => s.name).join(', ');
+  const description  = [
+    `👩 לקוחה: ${clientName}`,
+    `📞 טלפון: ${clientPhone}`,
+    `💅 טיפולים: ${serviceNames}`,
+    `⏱ זמן: ${duration} דקות`,
+    `💰 מחיר: ${totalPrice} ₪`,
+    notes ? `📝 הערות: ${notes}` : ''
+  ].filter(Boolean).join('\n');
+  return { summary: `💅 תור: ${clientName} – ${serviceNames}`, description };
+}
+
 function getAuth() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
   return new google.auth.GoogleAuth({
@@ -76,7 +91,8 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { action, eventId, accessToken, date, time, duration } = body;
+  const { action, eventId, accessToken, date, time, duration,
+          services, totalPrice, clientName, clientPhone, notes } = body;
   if (!action || !eventId) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action or eventId' }) };
   }
@@ -121,6 +137,15 @@ exports.handler = async (event) => {
 
       const patchBody = { start: { dateTime: startLocal, timeZone: TZ } };
       if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };
+
+      // When the client added extra services during the update, refresh the
+      // event title/description and price so the calendar reflects the new
+      // treatment list and duration.
+      if (Array.isArray(services) && services.length && clientName) {
+        Object.assign(patchBody, buildEventFields({
+          clientName, clientPhone, services, duration: dur, totalPrice, notes
+        }));
+      }
 
       await calendar.events.patch({ calendarId: CALENDAR_ID, eventId, requestBody: patchBody });
       return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };

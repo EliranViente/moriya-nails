@@ -424,13 +424,34 @@
               <span class="rb-icon">🗓️</span>
               <div class="rb-head-text">
                 <span class="rb-title">הזזת תור</span>
-                <span class="rb-sub">בחרי מועד חדש — הטיפול, אורכו והמחיר נשארים זהים 💅</span>
+                <span class="rb-sub">אפשר לשנות מועד ו/או להוסיף תוספות לתור — הטיפול הקבוע נשאר זהה 💅</span>
               </div>
             </div>
             <div class="rb-current">
               <span class="rb-current-label">המועד הנוכחי</span>
               <span class="rb-current-when" id="rb-current-when">—</span>
               <span class="rb-current-svc" id="rb-current-svc">—</span>
+            </div>
+          </div>
+
+          <!-- Add extra services while rescheduling – base treatment stays locked,
+               only optional add-ons can be appended (rendered by JS). -->
+          <div class="reschedule-extras" id="reschedule-extras" style="display:none;">
+            <button type="button" class="rx-toggle" id="rx-toggle" aria-expanded="false">
+              <span class="rx-toggle-text">
+                <span class="rx-toggle-icon">✨</span>
+                רוצה להוסיף תוספות לתור?
+              </span>
+              <span class="rx-toggle-sub">תיקון ציפורן שנשברה, קישוט ועוד — יתעדכנו ביומן</span>
+              <span class="rx-chevron">▾</span>
+            </button>
+            <div class="rx-panel" id="rx-panel" style="display:none;">
+              <div class="rx-locked" id="rx-locked">
+                <span class="rx-locked-label">🔒 הטיפול הקבוע (לא ניתן לשינוי)</span>
+                <span class="rx-locked-svc" id="rx-locked-svc">—</span>
+              </div>
+              <div class="rx-list" id="rx-list"><!-- add-ons rendered by JS --></div>
+              <div class="rx-summary" id="rx-summary"></div>
             </div>
           </div>
 
