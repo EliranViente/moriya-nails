@@ -390,18 +390,19 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 //   closed → none · explicit open rows → those · else Friday → default · else none.
 // Each open window is sliced into appointments on a grid that depends on the
 // treatment length (90-min standard, 30-min for short treatments), minus breaks.
-const SLOT_LEN = 90; // minutes per bookable appointment slot (standard treatments)
-// Short treatments (under SHORT_TREATMENT_MAX) book on a tighter 30-min grid
-// instead of the 90-min cadence, so quick visits don't waste a full slot.
-const SHORT_SLOT_LEN = 30;
-const SHORT_TREATMENT_MAX = 35; // durations strictly under this use the 30-min grid
-// Default Friday: 09:00–17:30 with two standing breaks (10:30–11:15 and
-// 14:15–14:30), which yields five 90-min slots — 09:00 · 11:15 · 12:45 · 14:30 · 16:00.
-const DEFAULT_FRIDAY_OPEN  = [{ start: 9 * 60, end: 17 * 60 + 30 }];          // 09:00–17:30
-const DEFAULT_FRIDAY_BLOCK = [
-  { start: 10 * 60 + 30, end: 11 * 60 + 15 },   // 10:30–11:15
-  { start: 14 * 60 + 15, end: 14 * 60 + 30 },   // 14:15–14:30
-];
+// Scheduling model: start times sit on a fixed 90-min grid (09:00 · 11:15 · 12:45
+// · 14:30 · 16:00) that stays stable regardless of the client's own treatment
+// length. Already-booked appointments consume their real length and push the
+// break and every later slot forward by the overflow. A slot is offered when the
+// client's appointment fits there without overlapping a booking and ends by 18:00.
+//   • Big break (10:30–11:15): fixed and protected — a too-long appointment may
+//     overrun into it (up to 11:15) but it never moves; no slot starts inside it.
+//   • Small break (15 min): floating — it (and the slots after it) get pushed
+//     later when an appointment is still running past 14:00.
+const DEFAULT_FRIDAY_OPEN = [{ start: 9 * 60, end: 18 * 60 }];             // 09:00–18:00 (last appt ends by 18:00)
+const FRIDAY_BIG_BREAK    = { start: 10 * 60 + 30, end: 11 * 60 + 15 };    // 10:30–11:15 (fixed)
+const FRIDAY_FLOAT_BREAK  = { notBefore: 14 * 60, len: 15 };               // 15-min floating afternoon rest
+const NOMINAL_SLOT        = 90;                                            // grid spacing for empty time
 const padNum   = n => String(n).padStart(2, '0');
 const hhmmToMin = hhmm => { const [h, m] = hhmm.slice(0, 5).split(':').map(Number); return h * 60 + m; };
 const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
@@ -456,11 +457,14 @@ async function getDayWindows(dateStr) {
   const [y, m] = dateStr.split('-').map(Number);
   const byDate = await getMonthAvailability(y, m - 1);
   const info   = byDate.get(dateStr) || { open: [], block: [], closed: false };
-  const block  = [...(info.block || [])];
-  if (usesDefaultFriday(dateStr, info)) {
-    DEFAULT_FRIDAY_BLOCK.forEach(b => block.push({ ...b }));
-  }
-  return { open: effectiveOpenWindows(dateStr, info), block };
+  // Admin-defined breaks are hard blocks; the fixed big break applies only when
+  // the day runs on the default Friday schedule (the floating break is derived
+  // from the day's bookings at slot-generation time).
+  return {
+    open:        effectiveOpenWindows(dateStr, info),
+    adminBlocks: [...(info.block || [])],
+    bigBreak:    usesDefaultFriday(dateStr, info) ? { ...FRIDAY_BIG_BREAK } : null,
+  };
 }
 
 // Busy intervals for a day, cached so the calendar can check every open day
@@ -635,77 +639,140 @@ async function loadTimeSlots(dateStr) {
     console.warn('Backend not reachable, showing all slots as available');
   }
 
-  // A logged-in user may have only one appointment per day.
+  // A logged-in client may book more than one appointment per day. If she
+  // already has one on this date, show a friendly note (but still allow it) and
+  // treat those appointments as busy so she can't overlap a slot she holds.
+  let sameDayNote = '';
+  let ownBusy = [];
   if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
     try {
       const { data: existing } = await MoriyaAuth.sb
         .from('appointments')
-        .select('id')
+        .select('id, start_time, duration_min')
         .eq('user_id', MoriyaAuth.user.id)
         .eq('date', dateStr)
         .neq('status', 'cancelled');
-      const conflicts = (existing || []).filter(
+      const already = (existing || []).filter(
         a => !editingAppointment || a.id !== editingAppointment.id
       );
-      if (conflicts.length > 0) {
-        slotsGrid.innerHTML = '<div class="no-slots">כבר קבעת תור ליום זה 💅<br/>ניתן לקבוע תור אחד בלבד בכל יום</div>';
-        return;
+      if (already.length > 0) {
+        sameDayNote = 'ℹ️ כבר יש לך תור ביום זה — התור שתקבעי כאן יתווסף כתור <strong>נוסף</strong> באותו יום 💅';
       }
-    } catch (e) { /* on error, allow booking */ }
+      ownBusy = already.map(a => {
+        const s = hhmmToMin(a.start_time);
+        return { start: s, end: s + (a.duration_min || 0) };
+      });
+    } catch (e) { /* on error, just skip the note */ }
   }
+  renderSameDayNote(sameDayNote);
 
-  busySlots = carveOwnAppointment(dateStr, busySlots);
+  busySlots = carveOwnAppointment(dateStr, busySlots).concat(ownBusy);
   const dayWindows = await getDayWindows(dateStr);
   const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr, dayWindows);
   renderSlots(slots, slotsGrid);
 }
 
-// Slice an open window [ws,we) into appointment start times. The cadence depends
-// on the treatment length: short treatments (under SHORT_TREATMENT_MAX) book on a
-// 30-min grid, everything else on the 90-min grid. A break shifts the cadence: the
-// next start resumes from the break's end (so a 10:30–10:45 break makes the next
-// slot 10:45, then a full step later …).
-function sliceWindowWithBreaks(ws, we, breaks, durationMin) {
-  const step = durationMin < SHORT_TREATMENT_MAX ? SHORT_SLOT_LEN : SLOT_LEN;
-  const bks = (breaks || []).filter(b => b.end > ws && b.start < we).sort((a, b) => a.start - b.start);
-  const starts = [];
-  let cursor = ws;
-  while (cursor + durationMin <= we) {
-    const hit = bks.find(b => cursor < b.end && cursor + durationMin > b.start);
-    if (hit) { cursor = hit.end; continue; }   // can't fit before this break → jump past it
-    starts.push(cursor);
-    cursor += step;                             // gap between appointments
+// ─── Dynamic slot generation ──────────────────────────────────────────────────
+// Appointments consume their real length and pack back-to-back: the next start
+// lands on the actual end of the previous booking (or a break boundary), so the
+// schedule "bites" exactly the requested duration and shows real next-free times.
+
+// Merge overlapping intervals into a sorted, disjoint list.
+function mergeIntervals(list) {
+  const sorted = (list || []).filter(x => x && x.end > x.start).sort((a, b) => a.start - b.start);
+  const out = [];
+  for (const iv of sorted) {
+    const last = out[out.length - 1];
+    if (last && iv.start <= last.end) last.end = Math.max(last.end, iv.end);
+    else out.push({ start: iv.start, end: iv.end });
   }
-  return starts;
+  return out;
 }
 
-function buildAvailableSlots(durationMin, busySlots, dateStr, dayWindows) {
-  const pad      = n => String(n).padStart(2, '0');
+// Build the day's open slot anchors on the fixed 90-min grid. Empty time advances
+// by the nominal slot length (keeping the grid stable and duration-independent);
+// booked time advances by the booking's real length, which pushes the break and
+// every later anchor forward by the overflow. Booked anchors are skipped.
+function buildDayAnchors(ws, we, bigBreak, floatBreak, bookings) {
+  const bks = mergeIntervals(bookings);
+  const anchors = [];
+  let cursor = ws, smallUsed = false, guard = 0;
+  while (cursor < we && guard++ < 300) {
+    // Floating small break: inserted once, before the first anchor at/after notBefore.
+    if (floatBreak && !smallUsed && cursor >= floatBreak.notBefore) {
+      smallUsed = true; cursor += floatBreak.len; continue;
+    }
+    // Big break: fixed — never sit an anchor inside it.
+    if (bigBreak && cursor >= bigBreak.start && cursor < bigBreak.end) {
+      cursor = bigBreak.end; continue;
+    }
+    // A booking covering the cursor → advance past it by its real length.
+    const cover = bks.find(b => b.start <= cursor && cursor < b.end);
+    if (cover) { cursor = cover.end; continue; }
+    // Open anchor.
+    anchors.push(cursor);
+    let next = cursor + NOMINAL_SLOT;
+    const nextBk = bks.find(b => b.start > cursor && b.start < next);   // a booking starts within this slot
+    if (nextBk) next = nextBk.start;
+    if (bigBreak && cursor < bigBreak.start && next > bigBreak.start) next = bigBreak.start;
+    cursor = next;
+  }
+  return anchors;
+}
+
+// All bookable start minutes for `duration` on a day, given its bookings and windows.
+function computeAvailableStarts(duration, busy, dayWindows, dateStr) {
   const now      = new Date();
-  const todayStr = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+  const todayStr = `${now.getFullYear()}-${padNum(now.getMonth() + 1)}-${padNum(now.getDate())}`;
   const isToday  = dateStr === todayStr;
   const nowMin   = now.getHours() * 60 + now.getMinutes();
 
-  const wins   = dayWindows || { open: [], block: [] };
-  const blocks = wins.block || [];
+  const wins       = dayWindows || { open: [], adminBlocks: [], bigBreak: null };
+  const bigBreak   = wins.bigBreak;
+  // The floating afternoon break is part of the default Friday schedule, so it
+  // applies only when the fixed big break does (not on admin-customised days).
+  const floatBreak = bigBreak ? FRIDAY_FLOAT_BREAK : null;
+  // Admin blocks + calendar busy + the client's own appointments are all hard
+  // bookings (merged/deduped) that block overlap and push the grid.
+  const bookings   = mergeIntervals([...(wins.adminBlocks || []), ...(busy || [])]);
 
-  // 90-min cadence inside each effective open window, shifted by breaks.
-  let starts = [];
+  const out = [];
   (wins.open || []).forEach(w => {
-    sliceWindowWithBreaks(w.start, w.end, blocks, durationMin).forEach(m => starts.push(m));
+    buildDayAnchors(w.start, w.end, bigBreak, floatBreak, bookings).forEach(a => {
+      const end = a + duration;
+      if (end > w.end) return;                                        // last appointment ends by the window end (18:00)
+      if (bigBreak && a < bigBreak.start && end > bigBreak.end) return; // may eat the big break but not cross 11:15
+      if (bookings.some(b => a < b.end && end > b.start)) return;      // no overlap with a booking
+      out.push(a);
+    });
   });
-  starts = [...new Set(starts)].sort((a, b) => a - b);
+  return [...new Set(out)].sort((a, b) => a - b)
+    .filter(m => !(isToday && m <= nowMin));
+}
 
-  return starts.map(m => {
-    const endM   = m + durationMin;
-    const busy   = busySlots.some(b => m < b.end && endM > b.start);   // overlaps a booking
-    const isPast = isToday && m <= nowMin;                              // already passed
-    return {
-      label: `${pad(Math.floor(m/60))}:${pad(m%60)}`,
-      busy: busy || isPast,
-      blockedReason: isPast ? 'past' : null
-    };
-  });
+// Thin wrapper keeping the {label, busy} shape the callers expect. Every returned
+// slot is bookable (occupied times are simply never generated).
+function buildAvailableSlots(durationMin, busySlots, dateStr, dayWindows) {
+  return computeAvailableStarts(durationMin, busySlots, dayWindows, dateStr).map(m => ({
+    label: `${padNum(Math.floor(m / 60))}:${padNum(m % 60)}`,
+    busy: false,
+  }));
+}
+
+// Show/hide the "you already have an appointment today" note above the slots.
+function renderSameDayNote(message) {
+  const box  = document.getElementById('slots-box');
+  const grid = document.getElementById('slots-grid');
+  if (!box || !grid) return;
+  let note = document.getElementById('same-day-note');
+  if (!message) { if (note) note.remove(); return; }
+  if (!note) {
+    note = document.createElement('div');
+    note.id = 'same-day-note';
+    note.className = 'same-day-note';
+    box.insertBefore(note, grid);
+  }
+  note.innerHTML = message;
 }
 
 function renderSlots(slots, container) {
@@ -713,20 +780,10 @@ function renderSlots(slots, container) {
     container.innerHTML = '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>נסי לבחור יום שישי אחר</div>';
     return;
   }
-  container.innerHTML = slots.map(s => {
-    const title = s.blockedReason === 'gap'
-      ? 'title="לא ניתן להזמין – נשאר פרק זמן קצר מדי לפני התור"'
-      : s.blockedReason === 'past'
-      ? 'title="השעה כבר עברה"'
-      : s.blockedReason === 'block'
-      ? 'title="הפסקה – לא מתקבלים תורים בשעה זו"'
-      : '';
-    return `
-    <div class="time-slot ${s.busy ? 'busy' : ''} ${s.blockedReason === 'gap' ? 'gap-blocked' : ''}"
-         ${!s.busy ? `data-time="${s.label}"` : ''} ${title}>
-      ${s.label}
-    </div>`;
-  }).join('');
+  // Every slot returned by the dynamic generator is bookable.
+  container.innerHTML = slots.map(s =>
+    `<div class="time-slot" data-time="${s.label}">${s.label}</div>`
+  ).join('');
 
   // Re-apply an existing selection: after a duration change the grid is rebuilt,
   // and if the chosen time still fits we keep it selected so the client can
@@ -757,13 +814,21 @@ async function findNearestSlot() {
   const pad = n => String(n).padStart(2, '0');
   const today = new Date(); today.setHours(0, 0, 0, 0);
 
-  // Dates the logged-in user already booked (one appointment per day)
-  const bookedDates = new Set();
+  // Clients may hold more than one appointment per day, so days they already
+  // booked are still eligible — their own bookings just count as busy (so the
+  // nearest slot never overlaps one they hold).
+  const ownByDate = new Map();
   if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
     try {
       const { data } = await MoriyaAuth.sb.from('appointments')
-        .select('date').eq('user_id', MoriyaAuth.user.id).neq('status', 'cancelled');
-      (data || []).forEach(a => bookedDates.add(a.date));
+        .select('date, start_time, duration_min')
+        .eq('user_id', MoriyaAuth.user.id).neq('status', 'cancelled');
+      (data || []).forEach(a => {
+        const s = hhmmToMin(a.start_time);
+        const arr = ownByDate.get(a.date) || [];
+        arr.push({ start: s, end: s + (a.duration_min || 0) });
+        ownByDate.set(a.date, arr);
+      });
     } catch (e) { /* ignore */ }
   }
 
@@ -774,8 +839,8 @@ async function findNearestSlot() {
     const wins    = await getDayWindows(dateStr);
     // Bookable when the day has effective open windows (Fridays by default).
     const bookable = wins.open.length > 0;
-    if (bookable && !bookedDates.has(dateStr)) {
-      const busy = await getBusySlots(dateStr);
+    if (bookable) {
+      const busy = (await getBusySlots(dateStr)).concat(ownByDate.get(dateStr) || []);
       const free = buildAvailableSlots(state.totalTime, busy, dateStr, wins).find(s => !s.busy);
       if (free) return { date: dateStr, time: free.label };
     }
@@ -940,21 +1005,9 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
 
   const btn = e.target.querySelector('.btn-confirm');
 
-  // Guard: one appointment per day per logged-in user (final safety check)
-  if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
-    try {
-      const { data: existing } = await MoriyaAuth.sb
-        .from('appointments')
-        .select('id')
-        .eq('user_id', MoriyaAuth.user.id)
-        .eq('date', state.selectedDate)
-        .neq('status', 'cancelled');
-      if (existing && existing.length > 0) {
-        alert('כבר קבעת תור ליום זה. ניתן לקבוע תור אחד בלבד בכל יום.');
-        return;
-      }
-    } catch (e) { /* on error, continue */ }
-  }
+  // Clients may book more than one appointment per day — the slot step already
+  // notes when they have another that day, and the dynamic slots prevent picking
+  // an overlapping time, so no hard per-day guard is enforced here.
 
   btn.disabled    = true;
   btn.textContent = 'שולחת…';
