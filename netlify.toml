@@ -26,3 +26,9 @@
 # (a paused project stops resolving and breaks login). Runs at 06:00 UTC daily.
 [functions."keepalive"]
   schedule = "0 6 * * *"
+
+# ─── Reminder nudge: email Moriya a few days before any day with appointments ───
+# so she remembers to send each client her WhatsApp reminder from the dashboard.
+# Runs 07:00 UTC daily (~10:00 Israel); only emails when that day has bookings.
+[functions."reminder-nudge"]
+  schedule = "0 7 * * *"
