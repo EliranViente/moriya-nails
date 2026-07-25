@@ -76,6 +76,11 @@ document.querySelectorAll('.nav-link').forEach(link => {
     document.getElementById('nav-links').classList.remove('open');
   });
 });
+// The in-menu "my appointments" entry (mobile) opens the modal instead of navigating.
+document.getElementById('nav-myappts-link')?.addEventListener('click', (e) => {
+  e.preventDefault();
+  window.openMyAppointments && window.openMyAppointments();
+});
 
 // ─── Scroll reveal ────────────────────────────────────────────────────────────
 const revealObserver = new IntersectionObserver(entries => {

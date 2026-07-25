@@ -117,6 +117,7 @@ ul { list-style: none; }
   align-items: center;
   gap: 10px;
   align-self: stretch;   /* fill the full bar height so the whole logo area is clickable */
+  flex-shrink: 0;        /* never let a crowded bar squeeze/blur the wordmark */
 }
 
 /* Logo image (real Moriya Nails logo) */
@@ -129,7 +130,7 @@ ul { list-style: none; }
 .nav-logo:hover .nav-logo-img { transform: scale(1.04); }
 
 @media (max-width: 560px) {
-  .nav-logo-img { height: 48px; }
+  .nav-logo-img { height: 40px; }   /* smaller wordmark → room for the auth buttons */
 }
 
 .nav-links {
@@ -175,6 +176,7 @@ ul { list-style: none; }
   border-radius: var(--radius-xl);
   transition: all var(--transition);
   white-space: nowrap;
+  flex-shrink: 0;
 }
 .nav-auth-btn.google {
   display: inline-flex;
@@ -218,12 +220,17 @@ ul { list-style: none; }
   border-color: var(--pink-200);
 }
 .nav-admin-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   padding: 8px 16px;
   border-radius: var(--radius-xl);
   background: linear-gradient(135deg, var(--pink-400), var(--pink-500));
   color: var(--white);
   font-weight: 600;
   font-size: 0.85rem;
+  white-space: nowrap;   /* keep "📊 ניהול" on one line — never wrap into a blob */
+  flex-shrink: 0;
   box-shadow: 0 4px 12px rgba(232,88,128,0.3);
   transition: transform var(--transition);
 }
@@ -234,6 +241,16 @@ ul { list-style: none; }
   .nav-auth-btn.google span { display: none; }  /* show just the Google icon */
   .nav-auth-btn.google { padding: 9px 12px; }
   .nav-cluster { gap: 10px; }
+}
+
+/* "התורים שלי" lives in the top bar on desktop, but moves into the hamburger
+   menu on phones so the logo + remaining auth buttons never crowd the row.
+   The menu item is hidden by default; it only appears on phones once logged in
+   (auth.js flags #navbar.is-authed). */
+.nav-myappts-item { display: none; }
+@media (max-width: 720px) {
+  .nav-auth-btn.myappts { display: none; }                 /* moved into the menu */
+  #navbar.is-authed .nav-myappts-item { display: block; }
 }
 
 .hamburger {
@@ -2393,6 +2410,14 @@ a, button, label, .nav-link, .time-slot, .cal-day, .qty-btn,
 .nav-inner {
   padding-left: max(24px, env(safe-area-inset-left));
   padding-right: max(24px, env(safe-area-inset-right));
+}
+/* Tighter side padding on phones so the logged-in bar (logo + auth buttons +
+   hamburger) has the width it needs without crowding. */
+@media (max-width: 560px) {
+  .nav-inner {
+    padding-left: max(16px, env(safe-area-inset-left));
+    padding-right: max(16px, env(safe-area-inset-right));
+  }
 }
 
 @media (max-width: 768px) {

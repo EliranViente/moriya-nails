@@ -73,6 +73,11 @@ function renderAuthUI() {
   const box = document.getElementById('nav-auth');
   if (!box) return;
 
+  // Flag the navbar so the CSS can reveal the "my appointments" menu item
+  // (shown inside the hamburger on phones) only while logged in.
+  const navbar = document.getElementById('navbar');
+  if (navbar) navbar.classList.toggle('is-authed', MoriyaAuth.isLoggedIn());
+
   if (MoriyaAuth.isLoggedIn()) {
     const name = MoriyaAuth.firstName();
     // Admins get a quick link to the management dashboard.
