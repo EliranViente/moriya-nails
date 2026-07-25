@@ -82,6 +82,27 @@ document.getElementById('nav-myappts-link')?.addEventListener('click', (e) => {
   window.openMyAppointments && window.openMyAppointments();
 });
 
+// ─── Time-of-day hero greeting ────────────────────────────────────────────────
+// Swap the "היי" opener for a greeting matching the current hour in Israel.
+// Reading the hour via the Asia/Jerusalem timezone means it's correct for any
+// visitor regardless of their device timezone, and DST (IST⇄IDT) is handled
+// automatically by the browser. If anything fails, the "היי" fallback stays.
+(function setHeroGreeting() {
+  const el = document.getElementById('hero-greeting');
+  if (!el) return;
+  try {
+    const hour = +new Date().toLocaleString('en-US', {
+      timeZone: 'Asia/Jerusalem', hour: 'numeric', hourCycle: 'h23'
+    });
+    const greeting =
+      hour >= 5  && hour < 12 ? 'בוקר טוב'    :
+      hour >= 12 && hour < 17 ? 'צהריים טובים' :
+      hour >= 17 && hour < 21 ? 'ערב טוב'     :
+                                'לילה טוב';
+    el.textContent = greeting;
+  } catch (_) { /* keep the "היי" fallback */ }
+})();
+
 // ─── Scroll reveal ────────────────────────────────────────────────────────────
 const revealObserver = new IntersectionObserver(entries => {
   entries.forEach(e => { if (e.isIntersecting) e.target.classList.add('visible'); });
