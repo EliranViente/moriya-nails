@@ -20,17 +20,25 @@ const TZ          = 'Asia/Jerusalem';
 
 // Rebuild the event summary/description from appointment details – kept in sync
 // with /api/book so a rescheduled appointment reads identically on the calendar.
-function buildEventFields({ clientName, clientPhone, services, duration, totalPrice, notes }) {
+// When the update needs Moriya's approval (client added > 15 min), the same event
+// is marked in place: a "⚠️ ממתין לאישור" prefix on the title plus a note at the
+// top of the description. Moriya approves by removing that prefix from the title.
+function buildEventFields({ clientName, clientPhone, services, duration, totalPrice, notes, pendingApproval, addedMinutes }) {
   const serviceNames = (services || []).map(s => s.name).join(', ');
-  const description  = [
-    `👩 לקוחה: ${clientName}`,
-    `📞 טלפון: ${clientPhone}`,
-    `💅 טיפולים: ${serviceNames}`,
-    `⏱ זמן: ${duration} דקות`,
-    `💰 מחיר: ${totalPrice} ₪`,
-    notes ? `📝 הערות: ${notes}` : ''
-  ].filter(Boolean).join('\n');
-  return { summary: `💅 תור: ${clientName} – ${serviceNames}`, description };
+  const lines = [];
+  if (pendingApproval) {
+    lines.push(`⚠️ ממתין לאישורך — הלקוחה הוסיפה ${addedMinutes} דקות לתור (מעל רבע שעה).`);
+    lines.push('לאישור: הסירי את הסימון "⚠️ ממתין לאישור" מכותרת האירוע.');
+    lines.push('');
+  }
+  lines.push(`👩 לקוחה: ${clientName}`);
+  lines.push(`📞 טלפון: ${clientPhone}`);
+  lines.push(`💅 טיפולים: ${serviceNames}`);
+  lines.push(`⏱ זמן: ${duration} דקות`);
+  lines.push(`💰 מחיר: ${totalPrice} ₪`);
+  if (notes) lines.push(`📝 הערות: ${notes}`);
+  const summary = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 תור: ${clientName} – ${serviceNames}`;
+  return { summary, description: lines.join('\n') };
 }
 
 function getAuth() {
@@ -39,6 +47,62 @@ function getAuth() {
     credentials,
     scopes: ['https://www.googleapis.com/auth/calendar']
   });
+}
+
+// Dedicated approval notification. When a client's update adds more than 15
+// minutes, Moriya gets an email (via Resend) so she can approve it — a reliable
+// channel alongside the in-place "⚠️ ממתין לאישור" marker on the calendar event.
+// Best-effort: any failure is swallowed so the calendar sync and client response
+// never break. No-op when RESEND_API_KEY isn't configured (e.g. local dev).
+async function sendApprovalEmail({ clientName, clientPhone, services, date, time, duration, addedMinutes, totalPrice, notes }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to     = process.env.APPROVAL_EMAIL_TO || 'moriya681@gmail.com';
+  const from   = process.env.APPROVAL_EMAIL_FROM || 'Moriya Nails <onboarding@resend.dev>';
+  if (!apiKey) return; // not configured — skip silently
+
+  const serviceNames = (services || []).map(s => s.name).join(', ');
+  const calLink = 'https://calendar.google.com/calendar/u/0/r';
+  const html = `
+    <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;
+                          background:#fff;border:1px solid #f3d7e3;border-radius:14px;overflow:hidden">
+      <div style="background:#e78aa8;color:#fff;padding:18px 22px;font-size:18px;font-weight:bold">
+        ⚠️ עדכון תור ממתין לאישורך
+      </div>
+      <div style="padding:22px;color:#333;font-size:15px;line-height:1.7">
+        <p>היי מוריה,<br>לקוחה עדכנה תור והוסיפה <b>${addedMinutes} דקות</b> (מעל רבע שעה), ולכן העדכון ממתין לאישורך.</p>
+        <table style="width:100%;border-collapse:collapse;margin:14px 0">
+          <tr><td style="padding:6px 0;color:#999">לקוחה</td><td style="padding:6px 0"><b>${clientName || '—'}</b></td></tr>
+          <tr><td style="padding:6px 0;color:#999">טלפון</td><td style="padding:6px 0">${clientPhone || '—'}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">תאריך ושעה</td><td style="padding:6px 0">${date} · ${time}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">טיפולים</td><td style="padding:6px 0">${serviceNames || '—'}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">משך חדש</td><td style="padding:6px 0">${duration} דקות</td></tr>
+          <tr><td style="padding:6px 0;color:#999">מחיר</td><td style="padding:6px 0">${totalPrice} ₪</td></tr>
+          ${notes ? `<tr><td style="padding:6px 0;color:#999">הערות</td><td style="padding:6px 0">${notes}</td></tr>` : ''}
+        </table>
+        <p style="margin:18px 0 6px">לאישור: פתחי את היומן והסירי את הסימון <b>"⚠️ ממתין לאישור"</b> מכותרת האירוע.</p>
+        <a href="${calLink}" style="display:inline-block;margin-top:10px;background:#e78aa8;color:#fff;
+                  text-decoration:none;padding:11px 22px;border-radius:9px;font-weight:bold">פתחי את היומן</a>
+      </div>
+    </div>`;
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: `⚠️ עדכון תור ממתין לאישור — ${clientName || 'לקוחה'} (${date})`,
+        html
+      })
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.warn('approval email failed:', res.status, detail);
+    }
+  } catch (err) {
+    console.warn('approval email error:', err.message);
+  }
 }
 
 const SB_URL  = process.env.SUPABASE_URL || '';
@@ -92,7 +156,8 @@ exports.handler = async (event) => {
   }
 
   const { action, eventId, accessToken, date, time, duration,
-          services, totalPrice, clientName, clientPhone, notes } = body;
+          services, totalPrice, clientName, clientPhone, notes,
+          pendingApproval, addedMinutes } = body;
   if (!action || !eventId) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action or eventId' }) };
   }
@@ -140,15 +205,26 @@ exports.handler = async (event) => {
 
       // When the client added extra services during the update, refresh the
       // event title/description and price so the calendar reflects the new
-      // treatment list and duration.
+      // treatment list and duration. If the addition needs approval, the same
+      // event is marked "⚠️ ממתין לאישור" in place (no separate event).
       if (Array.isArray(services) && services.length && clientName) {
         Object.assign(patchBody, buildEventFields({
-          clientName, clientPhone, services, duration: dur, totalPrice, notes
+          clientName, clientPhone, services, duration: dur, totalPrice, notes,
+          pendingApproval: !!pendingApproval, addedMinutes: Number(addedMinutes) || 0
         }));
       }
 
       await calendar.events.patch({ calendarId: CALENDAR_ID, eventId, requestBody: patchBody });
-      return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
+
+      // Notify Moriya by email when the update needs her approval (best-effort).
+      if (pendingApproval) {
+        await sendApprovalEmail({
+          clientName, clientPhone, services, date, time,
+          duration: dur, addedMinutes: Number(addedMinutes) || 0, totalPrice, notes
+        });
+      }
+
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true, pendingApproval: !!pendingApproval }) };
     }
 
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Unknown action' }) };

@@ -29,6 +29,28 @@ const TZ          = 'Asia/Jerusalem';
 const WORK_START  = 9;   // 09:00
 const WORK_END    = 17;  // 17:00
 
+// Dedicated approval email (parity with the Netlify function). No-op locally when
+// RESEND_API_KEY isn't set; best-effort so it never breaks the calendar sync.
+async function sendApprovalEmail({ clientName, clientPhone, services, date, time, duration, addedMinutes, totalPrice, notes }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to     = process.env.APPROVAL_EMAIL_TO || 'moriya681@gmail.com';
+  const from   = process.env.APPROVAL_EMAIL_FROM || 'Moriya Nails <onboarding@resend.dev>';
+  if (!apiKey) return;
+
+  const serviceNames = (services || []).map(s => s.name).join(', ');
+  const html = `<div dir="rtl" style="font-family:Arial,sans-serif">⚠️ עדכון תור ממתין לאישורך — `
+    + `${clientName || 'לקוחה'}, ${date} ${time}, נוספו ${addedMinutes} דקות (משך ${duration} דק', ${totalPrice} ₪). `
+    + `לאישור: הסירי את הסימון "⚠️ ממתין לאישור" מכותרת האירוע ביומן.</div>`;
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to: [to], subject: `⚠️ עדכון תור ממתין לאישור — ${clientName || 'לקוחה'} (${date})`, html })
+    });
+    if (!res.ok) console.warn('approval email failed:', res.status, await res.text().catch(() => ''));
+  } catch (err) { console.warn('approval email error:', err.message); }
+}
+
 // ─── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', calendar: CALENDAR_ID }));
 
@@ -120,7 +142,8 @@ app.post('/api/book', async (req, res) => {
 // (The local dev server is trusted, so it skips the Supabase ownership check.)
 app.post('/api/manage-booking', async (req, res) => {
   const { action, eventId, date, time, duration,
-          services, totalPrice, clientName, clientPhone, notes } = req.body;
+          services, totalPrice, clientName, clientPhone, notes,
+          pendingApproval, addedMinutes } = req.body;
   if (!action || !eventId) {
     return res.status(400).json({ error: 'Missing action or eventId' });
   }
@@ -152,21 +175,35 @@ app.post('/api/manage-booking', async (req, res) => {
       if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };
 
       // Refresh the title/description when extra services were added on update.
+      // Mark the same event "⚠️ ממתין לאישור" in place when the addition needs it.
       if (Array.isArray(services) && services.length && clientName) {
         const serviceNames = services.map(s => s.name).join(', ');
-        patchBody.summary     = `💅 ${clientName} – ${serviceNames}`;
-        patchBody.description = [
-          `👩 לקוחה: ${clientName}`,
-          `📞 טלפון: ${clientPhone}`,
-          `💅 טיפולים: ${serviceNames}`,
-          `⏱ זמן: ${dur} דקות`,
-          `💰 מחיר: ${totalPrice} ₪`,
-          notes ? `📝 הערות: ${notes}` : ''
-        ].filter(Boolean).join('\n');
+        const lines = [];
+        if (pendingApproval) {
+          lines.push(`⚠️ ממתין לאישורך — הלקוחה הוסיפה ${Number(addedMinutes) || 0} דקות לתור (מעל רבע שעה).`);
+          lines.push('לאישור: הסירי את הסימון "⚠️ ממתין לאישור" מכותרת האירוע.');
+          lines.push('');
+        }
+        lines.push(`👩 לקוחה: ${clientName}`);
+        lines.push(`📞 טלפון: ${clientPhone}`);
+        lines.push(`💅 טיפולים: ${serviceNames}`);
+        lines.push(`⏱ זמן: ${dur} דקות`);
+        lines.push(`💰 מחיר: ${totalPrice} ₪`);
+        if (notes) lines.push(`📝 הערות: ${notes}`);
+        patchBody.summary     = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 ${clientName} – ${serviceNames}`;
+        patchBody.description = lines.join('\n');
       }
 
       await calendar.events.patch({ calendarId: CALENDAR_ID, eventId, requestBody: patchBody });
-      return res.json({ success: true });
+
+      if (pendingApproval) {
+        await sendApprovalEmail({
+          clientName, clientPhone, services, date, time,
+          duration: Number(duration) || 0, addedMinutes: Number(addedMinutes) || 0, totalPrice, notes
+        });
+      }
+
+      return res.json({ success: true, pendingApproval: !!pendingApproval });
     }
 
     return res.status(400).json({ error: 'Unknown action' });

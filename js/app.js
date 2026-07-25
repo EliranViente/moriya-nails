@@ -1560,8 +1560,16 @@ async function updateAppointment() {
   const newDuration    = rescheduleBase.time  + extrasTotalTime();
   const newPrice       = rescheduleBase.price + extrasTotalPrice();
 
+  // When the client added more than 15 minutes to the appointment, the update
+  // needs Moriya's approval: it still syncs to the calendar, but the same event
+  // is marked "⚠️ ממתין לאישור" in place, an approval email is sent to Moriya,
+  // and the appointment is flagged pending_approval in Supabase.
+  const prevDuration   = editingAppointment.duration_min || 0;
+  const addedMinutes   = newDuration - prevDuration;
+  const needsApproval  = addedMinutes > 15;
+
   try {
-    // 1) Move the matching event on Google Calendar.
+    // 1) Move the matching event on Google Calendar (and add the approval flag).
     if (editingAppointment.google_event_id) {
       const accessToken = await getAccessToken();
       await fetch(`${API_BASE}/api/manage-booking`, {
@@ -1580,25 +1588,32 @@ async function updateAppointment() {
           clientName:  editingAppointment.client_name,
           clientPhone: editingAppointment.client_phone,
           notes:       editingAppointment.notes || '',
+          // Approval request (only when the addition exceeds 15 minutes).
+          pendingApproval: needsApproval,
+          addedMinutes,
           accessToken
         })
       });
     }
-    // 2) Persist the new time, treatment list, duration and price in Supabase.
+    // 2) Persist the new time, treatment list, duration and price in Supabase,
+    //    flagging the appointment as pending approval when required.
     await MoriyaAuth.sb.from('appointments').update({
       date:         state.selectedDate,
       start_time:   state.selectedTime,
       duration_min: newDuration,
       total_price:  newPrice,
-      services:     mergedServices
+      services:     mergedServices,
+      status:       needsApproval ? 'pending_approval' : 'booked'
     }).eq('id', editingAppointment.id);
   } catch (e) { console.warn('update failed:', e.message); }
 
   const svc = mergedServices.map(s => s.name);
   const treatments = svc.length ? svc : ["מניקור לק ג'ל"];
   renderSuccessCard({
-    heading:    'התור עודכן בהצלחה!',
-    subtitle:   'המועד עודכן ונשמר ביומן של מוריה. נתראה! 💅',
+    heading:  needsApproval ? 'העדכון נשלח לאישור מוריה' : 'התור עודכן בהצלחה!',
+    subtitle: needsApproval
+      ? 'מכיוון שהוספת מעל רבע שעה לתור, העדכון ממתין לאישור של מוריה. נעדכן אותך ברגע שיאושר 💗'
+      : 'המועד עודכן ונשמר ביומן של מוריה. נתראה! 💅',
     treatments,
     duration:        formatDuration(newDuration),
     durationMinutes: newDuration,
