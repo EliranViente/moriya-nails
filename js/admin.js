@@ -892,6 +892,13 @@ function apptStart(a) {
   return new Date(`${a.date}T${(a.start_time || '00:00').slice(0, 5)}:00`);
 }
 
+// An appointment is "past" once its end time has gone by. Past appointments
+// are treated as completed: they can no longer be rescheduled or cancelled.
+function isPastAppt(a) {
+  const end = apptStart(a).getTime() + (Number(a.duration_min) || 0) * 60 * 1000;
+  return end < Date.now();
+}
+
 // Narrow upcoming appointments to a relative time window from now.
 // Windows are cumulative: 24h = next 24 hours, week = next 7 days,
 // month = next 30 days. "all" returns the full upcoming list.
@@ -914,7 +921,7 @@ function renderAppointments() {
   const today = todayStr();
   let list = dash.appointments.slice();
   if (dash.apptFilter === 'upcoming') {
-    list = list.filter(a => a.date >= today && a.status !== 'cancelled');
+    list = list.filter(a => a.date >= today && a.status !== 'cancelled' && !isPastAppt(a));
     list = applyWindowFilter(list);
   } else if (dash.apptFilter === 'cancelled') {
     list = list.filter(a => a.status === 'cancelled');
@@ -930,14 +937,18 @@ function renderAppointments() {
     const time = (a.start_time || '').slice(0, 5);
     const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
     const cancelled = a.status === 'cancelled';
+    const past      = !cancelled && isPastAppt(a);
+    // A past appointment is shown as completed and is locked for editing.
+    const statusKey   = past ? 'done' : a.status;
+    const statusLabel = STATUS_HE[statusKey] || statusKey;
     // Reminder only makes sense for an upcoming appointment that has a phone.
-    const canRemind = !cancelled && a.date >= today && a.client_phone;
+    const canRemind = !cancelled && !past && a.client_phone;
     const remindBtn = canRemind ? `<button class="appt-btn remind" data-id="${a.id}">💬 שלחי תזכורת</button>` : '';
-    const actions = cancelled ? '' : `
+    const actions = (cancelled || past) ? '' : `
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
       <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
-    return `<div class="admin-appt-card ${cancelled ? 'is-cancelled' : ''}">
+    return `<div class="admin-appt-card ${cancelled ? 'is-cancelled' : ''}${past ? ' is-past' : ''}">
       <div class="aac-main">
         <div class="aac-when"><strong>📅 ${fmtDate(a.date)}</strong> · ⏰ ${time} <span class="aac-dow">(${dowLabel(a.date)})</span></div>
         <div class="aac-client">👤 ${a.client_name} · 📞 ${a.client_phone || '—'}</div>
@@ -946,7 +957,7 @@ function renderAppointments() {
       <div class="aac-side">
         <span class="aac-price">${ils(Number(a.total_price || 0))}</span>
         <span class="aac-dur">${a.duration_min} דק'</span>
-        <span class="aac-status st-${a.status}">${STATUS_HE[a.status] || a.status}</span>
+        <span class="aac-status st-${statusKey}">${statusLabel}</span>
       </div>
       <div class="aac-actions">${actions}</div>
     </div>`;
@@ -1130,7 +1141,7 @@ function wireClientsControls() {
 
 async function adminCancel(id) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
-  if (!appt) return;
+  if (!appt || appt.status === 'cancelled' || isPastAppt(appt)) return;
   const ok = await confirmDialog({
     icon:        '🗓️',
     title:       'ביטול תור',
@@ -1172,7 +1183,7 @@ let reschedCalMonth = new Date().getMonth();
 
 function openReschedule(id) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
-  if (!appt) return;
+  if (!appt || appt.status === 'cancelled' || isPastAppt(appt)) return;
   reschedTarget  = appt;
   reschedSelDate = appt.date;
   reschedSelTime = (appt.start_time || '').slice(0, 5);
