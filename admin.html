@@ -67,12 +67,17 @@
       <section class="admin-section">
         <div class="section-head">
           <h2>נתונים וגרפים</h2>
-          <div class="range-tabs" id="range-tabs">
-            <button class="range-tab" data-range="7">שבוע</button>
-            <button class="range-tab active" data-range="30">30 ימים</button>
-            <button class="range-tab" data-range="90">90 ימים</button>
-            <button class="range-tab" data-range="180">חצי שנה</button>
-            <button class="range-tab" data-range="365">שנה</button>
+          <div class="section-tools">
+            <div class="range-tabs" id="range-tabs">
+              <button class="range-tab" data-range="7">שבוע</button>
+              <button class="range-tab active" data-range="30">30 ימים</button>
+              <button class="range-tab" data-range="90">90 ימים</button>
+              <button class="range-tab" data-range="180">חצי שנה</button>
+              <button class="range-tab" data-range="365">שנה</button>
+            </div>
+            <button class="admin-btn ghost" id="export-xlsx" title="הורדת קובץ אקסל עם ההכנסות והתורים">
+              <span aria-hidden="true">📊</span> ייצוא לאקסל
+            </button>
           </div>
         </div>
         <div class="charts-grid">
@@ -245,6 +250,8 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+  <!-- SheetJS – builds the real .xlsx file for the "ייצוא לאקסל" button -->
+  <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/admin.js"></script>

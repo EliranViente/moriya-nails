@@ -35,6 +35,9 @@ function dowLabel(dateStr) {
 }
 function ils(n) { return Math.round(n).toLocaleString('he-IL') + ' ₪'; }
 
+// Hebrew labels for the appointment statuses stored in the database.
+const STATUS_HE = { booked: 'מאושר', done: 'בוצע', cancelled: 'בוטל', no_show: 'לא הגיעה' };
+
 // ─── WhatsApp reminders ───────────────────────────────────────────────────────
 // Venue details echoed inside the reminder message.
 const VENUE_ADDR = 'יעקב בר סימנטוב 18';
@@ -440,6 +443,166 @@ function drawChart(canvasId, config, empty) {
   dash.charts[canvasId] = new Chart(canvas.getContext('2d'), config);
 }
 
+// ─── Excel export ─────────────────────────────────────────────────────────────
+// The workbook mirrors everything at the top of the dashboard: the KPI cards,
+// both charts, and the appointments behind them. Every time window offered by
+// the range tabs (week, 30 days, …) is carried into each sheet where it means
+// something — as its own summary row, and as a "טווח" column that lets Moriya
+// filter the day/appointment sheets down to any of those same windows.
+
+// The range tabs in admin.html are the single source of truth for the windows,
+// so renaming or adding a tab there flows straight into the workbook.
+const FALLBACK_RANGES = [
+  { days: 7, label: 'שבוע' }, { days: 30, label: '30 ימים' }, { days: 90, label: '90 ימים' },
+  { days: 180, label: 'חצי שנה' }, { days: 365, label: 'שנה' },
+];
+
+function rangeOptions() {
+  const tabs = [...document.querySelectorAll('#range-tabs .range-tab')]
+    .map(t => ({ days: Number(t.dataset.range), label: t.textContent.trim() }))
+    .filter(r => r.days > 0 && r.label)
+    .sort((a, b) => a.days - b.days);
+  return tabs.length ? tabs : FALLBACK_RANGES;
+}
+
+// Charts span today ± range, so the export uses the very same window.
+function rangeWindow(days) {
+  return { from: dateStrOffset(-days), to: dateStrOffset(days) };
+}
+
+// The narrowest window containing this date. Every wider window contains it too,
+// so a single column is enough to filter the sheet by any of the tabs.
+function rangeLabelFor(dateStr, ranges) {
+  for (const r of ranges) {
+    const w = rangeWindow(r.days);
+    if (dateStr >= w.from && dateStr <= w.to) return r.label;
+  }
+  return 'מחוץ לטווח';
+}
+
+// Sheet 1, top block – the four KPI cards, computed exactly like renderKPIs().
+function exportKpiRows() {
+  const today = todayStr();
+  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+  const last30 = active.filter(a => a.date >= dateStrOffset(-30) && a.date <= today);
+  const revenue30 = last30.reduce((s, a) => s + Number(a.total_price || 0), 0);
+  const workingDays = new Set(last30.map(a => a.date)).size;
+  return [
+    { 'מדד': 'לקוחות רשומות', 'ערך': dash.clientsCount },
+    { 'מדד': 'תורים עתידיים', 'ערך': active.filter(a => a.date >= today).length },
+    { 'מדד': 'הכנסות (30 ימים אחרונים) ₪', 'ערך': revenue30 },
+    { 'מדד': 'ממוצע ליום עבודה ₪', 'ערך': workingDays ? Math.round(revenue30 / workingDays) : 0 },
+  ];
+}
+
+// Sheet 1, bottom block – one row per range tab, so all the windows sit
+// side by side instead of only the one currently selected on screen.
+function exportRangeRows(ranges) {
+  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+  return ranges.map(r => {
+    const w = rangeWindow(r.days);
+    const inRange = active.filter(a => a.date >= w.from && a.date <= w.to);
+    const revenue = inRange.reduce((s, a) => s + Number(a.total_price || 0), 0);
+    const days = new Set(inRange.map(a => a.date)).size;
+    return {
+      'טווח': r.label,
+      'מתאריך': fmtDate(w.from),
+      'עד תאריך': fmtDate(w.to),
+      'ימי עבודה': days,
+      'תורים': inRange.length,
+      'סה"כ הכנסות ₪': revenue,
+      'ממוצע ליום עבודה ₪': days ? Math.round(revenue / days) : 0,
+      'ממוצע לתור ₪': inRange.length ? Math.round(revenue / inRange.length) : 0,
+    };
+  });
+}
+
+// Sheet 2 – the numbers plotted in the two charts, one row per working day.
+function exportDayRows(ranges) {
+  const map = new Map(); // date -> { revenue, clients }
+  dash.appointments
+    .filter(a => a.status !== 'cancelled')
+    .forEach(a => {
+      const e = map.get(a.date) || { revenue: 0, clients: 0 };
+      e.revenue += Number(a.total_price || 0);
+      e.clients += 1;
+      map.set(a.date, e);
+    });
+  return [...map.keys()].sort().map(d => ({
+    'תאריך': fmtDate(d),
+    'יום בשבוע': dowLabel(d),
+    'לקוחות': map.get(d).clients,
+    'הכנסות ₪': map.get(d).revenue,
+    'טווח': rangeLabelFor(d, ranges),
+  }));
+}
+
+// Sheet 3 – every appointment on record, cancelled ones included and marked,
+// so nothing is lost even though the aggregates above leave them out.
+function exportApptRows(ranges) {
+  return dash.appointments
+    .slice()
+    .sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time))
+    .map(a => ({
+      'תאריך': fmtDate(a.date),
+      'יום בשבוע': dowLabel(a.date),
+      'שעה': (a.start_time || '').slice(0, 5),
+      'שם הלקוחה': a.client_name || '',
+      'טלפון': a.client_phone || '',
+      'טיפולים': (a.services || []).map(s => s.name).join(' · '),
+      'משך (דק׳)': Number(a.duration_min || 0),
+      'מחיר ₪': Number(a.total_price || 0),
+      'סטטוס': STATUS_HE[a.status] || a.status,
+      'הערות': a.notes || '',
+      'נקבע בתאריך': a.created_at ? fmtDate(String(a.created_at).slice(0, 10)) : '',
+      'טווח': rangeLabelFor(a.date, ranges),
+    }));
+}
+
+function colWidths(widths) { return widths.map(wch => ({ wch })); }
+
+function exportToExcel() {
+  if (typeof XLSX === 'undefined') {
+    alert('לא הצלחתי לטעון את מנוע האקסל. בדקי את החיבור לאינטרנט ונסי שוב 🙈');
+    return;
+  }
+  if (!dash.appointments.length) {
+    alert('אין עדיין נתונים לייצוא 🌸');
+    return;
+  }
+
+  const ranges = rangeOptions();
+  const wb = XLSX.utils.book_new();
+  // Open the workbook right-to-left, like the dashboard itself.
+  wb.Workbook = { Views: [{ RTL: true }] };
+
+  // ── Sheet 1: summary ──
+  const summary = XLSX.utils.aoa_to_sheet([
+    ['Moriya Nails · דוח הכנסות ותורים'],
+    [`הופק בתאריך: ${fmtDate(todayStr())}`],
+    ['תורים שבוטלו אינם נספרים בסיכומים, ומופיעים בגיליון "פירוט תורים" עם הסטטוס שלהם.'],
+    [''],
+    ['מדדים ראשיים (כמו בראש מסך הניהול)'],
+  ]);
+  XLSX.utils.sheet_add_json(summary, exportKpiRows(), { origin: -1 });
+  XLSX.utils.sheet_add_aoa(summary, [[''], ['לפי טווח זמן (כמו בגרפים)']], { origin: -1 });
+  XLSX.utils.sheet_add_json(summary, exportRangeRows(ranges), { origin: -1 });
+  summary['!cols'] = colWidths([30, 14, 14, 12, 10, 16, 20, 14]);
+  XLSX.utils.book_append_sheet(wb, summary, 'סיכום');
+
+  // ── Sheet 2: per working day (the chart data) ──
+  const days = XLSX.utils.json_to_sheet(exportDayRows(ranges));
+  days['!cols'] = colWidths([14, 12, 10, 14, 12]);
+  XLSX.utils.book_append_sheet(wb, days, 'לפי יום עבודה');
+
+  // ── Sheet 3: appointment by appointment ──
+  const appts = XLSX.utils.json_to_sheet(exportApptRows(ranges));
+  appts['!cols'] = colWidths([14, 12, 8, 20, 15, 34, 12, 12, 12, 28, 14, 12]);
+  XLSX.utils.book_append_sheet(wb, appts, 'פירוט תורים');
+
+  XLSX.writeFile(wb, `moriya-nails-report-${todayStr()}.xlsx`);
+}
+
 // ─── Availability editor ──────────────────────────────────────────────────────
 let editorKind = 'open';
 
@@ -763,7 +926,6 @@ function renderAppointments() {
     return;
   }
 
-  const statusLabel = { booked: 'מאושר', done: 'בוצע', cancelled: 'בוטל', no_show: 'לא הגיעה' };
   box.innerHTML = list.map(a => {
     const time = (a.start_time || '').slice(0, 5);
     const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
@@ -784,7 +946,7 @@ function renderAppointments() {
       <div class="aac-side">
         <span class="aac-price">${ils(Number(a.total_price || 0))}</span>
         <span class="aac-dur">${a.duration_min} דק'</span>
-        <span class="aac-status st-${a.status}">${statusLabel[a.status] || a.status}</span>
+        <span class="aac-status st-${a.status}">${STATUS_HE[a.status] || a.status}</span>
       </div>
       <div class="aac-actions">${actions}</div>
     </div>`;
@@ -1184,6 +1346,9 @@ function wireControls() {
       renderCharts();
     });
   });
+
+  const exportBtn = document.getElementById('export-xlsx');
+  if (exportBtn) exportBtn.addEventListener('click', exportToExcel);
 
   const subfilters = document.getElementById('appt-subfilters');
   document.querySelectorAll('#appt-filters .range-tab').forEach(tab => {
