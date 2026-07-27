@@ -486,6 +486,56 @@ ul { list-style: none; }
   overflow: hidden;
 }
 
+/* Login gate – swaps the whole wizard for a sign-in prompt while logged out.
+   The steps carry inline display styles from showStep(), so the locked rules
+   need !important to win over them. */
+.booking-gate { display: none; padding: 64px 32px; text-align: center; }
+.booking-card.is-locked .booking-gate { display: block; }
+.booking-card.is-locked .steps-bar,
+.booking-card.is-locked .booking-summary,
+.booking-card.is-locked .booking-step { display: none !important; }
+
+.booking-gate .bg-icon { font-size: 2.6rem; margin-bottom: 16px; }
+.booking-gate h3 {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: var(--gray-800);
+  margin-bottom: 12px;
+}
+.booking-gate p {
+  color: var(--gray-600);
+  max-width: 440px;
+  margin: 0 auto 26px;
+  line-height: 1.7;
+}
+.booking-gate .bg-note {
+  font-size: 0.85rem;
+  color: var(--gray-400);
+  margin: 20px auto 0;
+}
+.btn-google-login {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  padding: 15px 30px;
+  font-family: var(--font);
+  font-weight: 700;
+  font-size: 1rem;
+  color: var(--gray-700);
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.btn-google-login:hover {
+  border-color: var(--pink-400);
+  background: var(--pink-50);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+
 /* Steps bar */
 .steps-bar {
   display: flex;

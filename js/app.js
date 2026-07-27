@@ -145,6 +145,39 @@ document.querySelectorAll('.about-card, .contact-card')
 })();
 
 // ═══════════════════════════════════════════════════════════════════════════════
+//  BOOKING GATE – a Google session is required to book
+// ═══════════════════════════════════════════════════════════════════════════════
+// An appointment always belongs to a client profile: that is what lets her see,
+// reschedule and cancel it later, and what puts it on Moriya's dashboard. So the
+// wizard itself is hidden behind the sign-in prompt rather than merely skipping
+// the database write for guests.
+
+function canBook() {
+  return !!(window.MoriyaAuth && MoriyaAuth.isLoggedIn());
+}
+
+function syncBookingGate() {
+  const card = document.getElementById('booking-card');
+  if (!card) return;
+  const unlocked = canBook();
+  card.classList.toggle('is-locked', !unlocked);
+  if (!unlocked) {
+    // Never leave one client's details on screen for the next person to submit.
+    ['f-name', 'f-phone', 'f-notes'].forEach(id => {
+      const el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+  }
+}
+
+document.getElementById('gate-google-login')?.addEventListener('click', () => {
+  if (window.MoriyaAuth) MoriyaAuth.signIn();
+});
+// auth.js fires this once the session is resolved and on every login/logout.
+document.addEventListener('moriya-auth-changed', syncBookingGate);
+syncBookingGate();
+
+// ═══════════════════════════════════════════════════════════════════════════════
 //  STEP 1 – Service Selection
 // ═══════════════════════════════════════════════════════════════════════════════
 
@@ -949,9 +982,12 @@ function renderOrderSummary() {
   `;
 }
 
-// Prefill name & phone from the logged-in user's profile (autofill)
+// Prefill name & phone from the signed-in client. The name starts as the one she
+// last booked with and falls back to her Google name on a first booking —
+// displayName() already resolves that order. She can edit it freely, and
+// whatever she submits is written back to her profile for next time.
 function prefillUserDetails() {
-  if (!window.MoriyaAuth || !MoriyaAuth.isLoggedIn()) return;
+  if (!canBook()) return;
   const nameEl  = document.getElementById('f-name');
   const phoneEl = document.getElementById('f-phone');
   const name    = MoriyaAuth.displayName();
@@ -982,13 +1018,22 @@ document.getElementById('back-step2')?.addEventListener('click', () => showStep(
 document.getElementById('booking-form')?.addEventListener('submit', async e => {
   e.preventDefault();
 
+  // The gate keeps this form out of reach while logged out, but a session can
+  // expire with the wizard already open. Send her back to sign in rather than
+  // create an appointment with nothing to attach it to.
+  if (!canBook()) {
+    syncBookingGate();
+    document.getElementById('booking')?.scrollIntoView({ behavior: 'smooth' });
+    return;
+  }
+
   const name  = document.getElementById('f-name').value.trim();
   const phone = document.getElementById('f-phone').value.trim();
   const notes = document.getElementById('f-notes').value.trim();
 
-  // Validation. Autofill fills name/phone for Google users, but a guest who
-  // skipped a required field must be shown exactly what's missing – so we mark
-  // each empty field and scroll the page to the first one (and focus it).
+  // Validation. Both fields arrive prefilled, but she may clear one while
+  // editing – so we mark each empty field and scroll the page to the first one
+  // (and focus it) to show exactly what's missing.
   let valid = true;
   let firstInvalid = null;
   const nameEl  = document.getElementById('f-name');
@@ -1068,28 +1113,28 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     console.warn('Calendar booking failed (demo mode?):', err.message);
   }
 
-  // 2) Save to Supabase (profile + appointment) for logged-in users
+  // 2) Save to Supabase (profile + appointment). Booking is gated on a session,
+  //    so this always runs and every appointment reaches Moriya's dashboard.
   try {
-    if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
-      const uid = MoriyaAuth.user.id;
-      // remember name+phone for next-time autofill
-      await MoriyaAuth.sb.from('profiles').update({ full_name: name, phone }).eq('id', uid);
-      MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { full_name: name, phone });
-      // store the appointment
-      await MoriyaAuth.sb.from('appointments').insert({
-        user_id:         uid,
-        client_name:     name,
-        client_phone:    phone,
-        date:            state.selectedDate,
-        start_time:      state.selectedTime,
-        duration_min:    state.totalTime,
-        services:        services,
-        total_price:     state.totalPrice,
-        status:          'booked',
-        google_event_id: googleEventId,
-        notes:           notes || null
-      });
-    }
+    const uid = MoriyaAuth.user.id;
+    // The name and phone she just submitted become her profile from now on,
+    // and prefill the next booking.
+    await MoriyaAuth.sb.from('profiles').update({ full_name: name, phone }).eq('id', uid);
+    MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { full_name: name, phone });
+    // store the appointment
+    await MoriyaAuth.sb.from('appointments').insert({
+      user_id:         uid,
+      client_name:     name,
+      client_phone:    phone,
+      date:            state.selectedDate,
+      start_time:      state.selectedTime,
+      duration_min:    state.totalTime,
+      services:        services,
+      total_price:     state.totalPrice,
+      status:          'booked',
+      google_event_id: googleEventId,
+      notes:           notes || null
+    });
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
   }
