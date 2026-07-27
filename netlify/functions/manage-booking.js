@@ -129,6 +129,22 @@ function isAdminUser(user) {
   return Boolean(user && ADMIN_EMAILS.includes((user.email || '').toLowerCase()));
 }
 
+// Is there any appointment row at all behind this calendar event? Used by the
+// rollback path, which must never delete an event that did make it to the
+// database. A lookup failure counts as "yes" so an unverifiable event is left
+// alone rather than deleted on a guess.
+async function eventHasAppointment(eventId) {
+  try {
+    const res = await fetch(
+      `${SB_URL}/rest/v1/appointments?google_event_id=eq.${encodeURIComponent(eventId)}&select=id`,
+      { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } }
+    );
+    if (!res.ok) return true;
+    const rows = await res.json().catch(() => null);
+    return !Array.isArray(rows) || rows.length > 0;
+  } catch { return true; }
+}
+
 // Does this user own an appointment with the given Google event id?
 async function userOwnsEvent(userId, eventId) {
   try {
@@ -160,6 +176,49 @@ exports.handler = async (event) => {
           pendingApproval, addedMinutes } = body;
   if (!action || !eventId) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action or eventId' }) };
+  }
+
+  // Undo an event whose appointment never made it into the database. It cannot
+  // go through the owner check below, because that check reads the appointment
+  // row — the very row that is missing. Three conditions replace it, and all
+  // must hold: a valid session, a bookedBy stamp matching that session, and no
+  // appointment row pointing at the event. A real booking always has a row, and
+  // an event Moriya created by hand in the calendar carries no stamp, so neither
+  // can be reached from here.
+  if (action === 'rollback') {
+    if (!sbReady) {
+      return { statusCode: 503, headers, body: JSON.stringify({ error: 'not_configured' }) };
+    }
+    const user = await getUserFromToken(accessToken);
+    if (!user) {
+      return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };
+    }
+    try {
+      const calendar = google.calendar({ version: 'v3', auth: getAuth() });
+      let ev;
+      try {
+        ev = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
+      } catch (err) {
+        const code = err.code || (err.response && err.response.status);
+        // Already gone – the caller wanted it deleted, so that is a success.
+        if (code === 404 || code === 410) {
+          return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
+        }
+        throw err;
+      }
+      const stamp = (ev.data && ev.data.extendedProperties && ev.data.extendedProperties.private) || {};
+      if (stamp.bookedBy !== user.id) {
+        return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };
+      }
+      if (await eventHasAppointment(eventId)) {
+        return { statusCode: 409, headers, body: JSON.stringify({ error: 'appointment_exists' }) };
+      }
+      await calendar.events.delete({ calendarId: CALENDAR_ID, eventId });
+      return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
+    } catch (err) {
+      console.error('rollback error:', err.message);
+      return { statusCode: 500, headers, body: JSON.stringify({ error: 'rollback_failed', detail: err.message }) };
+    }
   }
 
   // Defense in depth: when Supabase is configured, verify the caller is either

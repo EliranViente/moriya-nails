@@ -996,6 +996,23 @@ function prefillUserDetails() {
   if (phoneEl && !phoneEl.value && phone) phoneEl.value = phone;
 }
 
+// Undo the calendar event created moments ago for a booking that then failed to
+// save. Best-effort: if it doesn't go through, the error screen has already sent
+// the client to Moriya, who can clear the leftover from her calendar.
+async function rollbackCalendarEvent(eventId) {
+  if (!eventId) return;
+  try {
+    const accessToken = await getAccessToken();
+    await fetch(`${API_BASE}/api/manage-booking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'rollback', eventId, accessToken })
+    });
+  } catch (err) {
+    console.warn('Calendar rollback failed:', err.message);
+  }
+}
+
 // Supabase access token of the logged-in user (used to authenticate
 // cancel/reschedule calls to the calendar-sync backend).
 async function getAccessToken() {
@@ -1014,6 +1031,10 @@ async function getAccessToken() {
 });
 
 document.getElementById('back-step2')?.addEventListener('click', () => showStep(2));
+
+// "נסי שוב" on the failure screen returns to the details step with everything
+// she filled in still there, so retrying is one click.
+document.getElementById('error-retry')?.addEventListener('click', () => showStep(3));
 
 document.getElementById('booking-form')?.addEventListener('submit', async e => {
   e.preventDefault();
@@ -1102,7 +1123,8 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
         clientPhone: phone,
         notes,
         services,
-        totalPrice:  state.totalPrice
+        totalPrice:  state.totalPrice,
+        userId:      MoriyaAuth.user.id
       })
     });
     if (res.ok) {
@@ -1115,14 +1137,21 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
 
   // 2) Save to Supabase (profile + appointment). Booking is gated on a session,
   //    so this always runs and every appointment reaches Moriya's dashboard.
+  let saveFailed = false;
   try {
     const uid = MoriyaAuth.user.id;
     // The name and phone she just submitted become her profile from now on,
-    // and prefill the next booking.
-    await MoriyaAuth.sb.from('profiles').update({ full_name: name, phone }).eq('id', uid);
-    MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { full_name: name, phone });
-    // store the appointment
-    await MoriyaAuth.sb.from('appointments').insert({
+    // and prefill the next booking. Only autofill rides on this, so a failure
+    // here is logged and the booking carries on.
+    const { error: profileErr } = await MoriyaAuth.sb.from('profiles')
+      .update({ full_name: name, phone }).eq('id', uid);
+    if (profileErr) console.warn('Profile update failed:', profileErr.message);
+    else MoriyaAuth.profile = Object.assign({}, MoriyaAuth.profile, { full_name: name, phone });
+
+    // supabase-js reports a rejected write in the returned `error` rather than
+    // throwing, so the result must be read — awaiting it bare would let a failed
+    // insert pass for a successful one.
+    const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert({
       user_id:         uid,
       client_name:     name,
       client_phone:    phone,
@@ -1135,8 +1164,22 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
       google_event_id: googleEventId,
       notes:           notes || null
     });
+    if (apptErr) throw new Error(apptErr.message);
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
+    saveFailed = true;
+  }
+
+  // The appointment lives nowhere anyone can manage it, so take the calendar
+  // event back down too — otherwise the slot stays blocked by a booking that
+  // Moriya can't see and the client can't cancel — and say so instead of
+  // showing a success screen for an appointment that does not exist.
+  if (saveFailed) {
+    await rollbackCalendarEvent(googleEventId);
+    btn.disabled    = false;
+    btn.textContent = 'אשרי הזמנה ✓';
+    showStep('error');
+    return;
   }
 
   showSuccess(name, phone, notes);
@@ -1215,7 +1258,7 @@ function showSuccess(name, phone, notes) {
 // ─── Step navigation ──────────────────────────────────────────────────────────
 function showStep(num) {
   if (typeof num === 'number') currentBookingStep = num;
-  ['1','2','3','success'].forEach(id => {
+  ['1','2','3','success','error'].forEach(id => {
     const el = document.getElementById(`step-${id}`);
     if (el) el.style.display = 'none';
   });

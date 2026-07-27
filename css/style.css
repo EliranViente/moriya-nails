@@ -1309,6 +1309,59 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   color: var(--gray-600);
   font-size: 1rem;
 }
+/* ── Booking failed – shown in place of the confirmation ── */
+.error-wrap {
+  text-align: center;
+  padding: 40px 24px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 14px;
+}
+.error-icon {
+  font-size: 3.4rem;
+  animation: popIn 0.5s cubic-bezier(0.4,0,0.2,1);
+}
+.error-wrap h3 {
+  font-size: 1.6rem;
+  font-weight: 800;
+  color: var(--gray-800);
+}
+.error-wrap p {
+  color: var(--gray-600);
+  font-size: 1rem;
+  max-width: 420px;
+  line-height: 1.7;
+}
+.error-wrap .error-sub { color: var(--gray-700); }
+.error-channels {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  justify-content: center;
+  margin-top: 4px;
+}
+.error-channel {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 13px 26px;
+  font-weight: 700;
+  color: var(--gray-700);
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-sm);
+  transition: all var(--transition);
+}
+.error-channel:hover {
+  border-color: var(--pink-400);
+  background: var(--pink-50);
+  transform: translateY(-1px);
+  box-shadow: var(--shadow-md);
+}
+.error-channel-icon { font-size: 1.15rem; }
+
 /* ── Confirmation details card ── */
 .success-card {
   width: 100%;

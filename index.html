@@ -616,6 +616,27 @@
           </div>
         </div>
 
+        <!-- ── ERROR ── only reached when the appointment failed to save; the
+             calendar event created for it is removed before this is shown, so
+             the client is told plainly that no appointment exists. -->
+        <div class="booking-step" id="step-error" style="display:none;">
+          <div class="error-wrap">
+            <div class="error-icon">😥</div>
+            <h3>משהו השתבש</h3>
+            <p>לא הצלחנו לשמור את התור, והוא <strong>לא נקבע</strong>. שום פרט לא נשמר ולא בוצע חיוב.</p>
+            <p class="error-sub">אפשר לנסות שוב עוד רגע — או פשוט לפנות למוריה, והיא תקבע לך את התור:</p>
+
+            <div class="error-channels">
+              <a href="https://wa.me/972504264057" target="_blank" rel="noopener" class="error-channel">
+                <span class="error-channel-icon">💬</span>
+                <span>וואטסאפ</span>
+              </a>
+            </div>
+
+            <button type="button" class="btn-next" id="error-retry">נסי שוב</button>
+          </div>
+        </div>
+
       </div><!-- .booking-card -->
     </div>
   </section>

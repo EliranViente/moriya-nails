@@ -29,7 +29,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes } = body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, userId } = body;
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
   }
@@ -65,7 +65,12 @@ exports.handler = async (event) => {
         summary:     `💅 תור: ${clientName} – ${serviceNames}`,
         description,
         start: { dateTime: startLocal, timeZone: TZ },
-        end:   { dateTime: endLocal,   timeZone: TZ }
+        end:   { dateTime: endLocal,   timeZone: TZ },
+        // Stamp who booked it. If saving the appointment to Supabase fails a
+        // moment later, /api/manage-booking?action=rollback uses this to prove
+        // the caller is undoing her own event — which is what keeps the rollback
+        // from ever touching a real booking or a block Moriya added by hand.
+        ...(userId ? { extendedProperties: { private: { bookedBy: String(userId) } } } : {})
         // No colorId – the event inherits the calendar's default color/settings.
       }
     });
