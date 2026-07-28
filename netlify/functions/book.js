@@ -3,6 +3,7 @@
  * Creates a Google Calendar event for the appointment.
  */
 const { google } = require('googleapis');
+const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
@@ -49,11 +50,10 @@ exports.handler = async (event) => {
     const startLocal = `${date}T${time}:00`;
     const endLocal   = `${date}T${eh}:${em}:00`;
 
-    const serviceNames = (services || []).map(s => s.name).join(', ');
     const description  = [
       `👩 לקוחה: ${clientName}`,
       `📞 טלפון: ${clientPhone}`,
-      `💅 טיפולים: ${serviceNames}`,
+      `💅 טיפולים: ${serviceDetailLines(services).join('\n')}`,
       `⏱ זמן: ${duration} דקות`,
       `💰 מחיר: ${totalPrice} ₪`,
       notes ? `📝 הערות: ${notes}` : ''
@@ -62,7 +62,7 @@ exports.handler = async (event) => {
     const ev = await calendar.events.insert({
       calendarId: CALENDAR_ID,
       requestBody: {
-        summary:     `💅 תור: ${clientName} – ${serviceNames}`,
+        summary:     `💅 תור: ${clientName} – ${serviceTitle(services)}`,
         description,
         start: { dateTime: startLocal, timeZone: TZ },
         end:   { dateTime: endLocal,   timeZone: TZ },

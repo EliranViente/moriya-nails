@@ -686,6 +686,12 @@ ul { list-style: none; }
 }
 .base-treatment-group .base-treatment-row { margin-bottom: 14px; }
 .base-treatment-group .base-treatment-row:last-child { margin-bottom: 0; }
+.feet-locked-hint {
+  margin-top: 12px;
+  font-size: 0.82rem;
+  color: var(--gray-400);
+  text-align: center;
+}
 .base-badge {
   background: linear-gradient(135deg, var(--pink-400), var(--pink-500));
   color: var(--white);
@@ -940,6 +946,21 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   cursor: not-allowed;
   transform: none;
   box-shadow: none;
+}
+
+/* Step 1's two continue buttons share the row evenly. With only one of them
+   shown (a client who can't book the feet gel-polish) it keeps the full width.
+   On a narrow phone they stack rather than squeeze. */
+.step-actions { display: flex; gap: 14px; }
+.step-actions .btn-next {
+  flex: 1 1 0;
+  width: auto;
+  min-width: 0;
+  padding-inline: 18px;
+  font-size: 0.98rem;
+}
+@media (max-width: 560px) {
+  .step-actions { flex-direction: column; }
 }
 
 .btn-back {
@@ -1688,6 +1709,8 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 }
 label.rx-row { cursor: pointer; }
 .rx-row.checked { border-color: var(--pink-300); box-shadow: var(--shadow-sm); background: var(--pink-50); }
+/* Listed, but needs another treatment before it can be picked. */
+.rx-row.locked { opacity: 0.4; filter: grayscale(0.55); cursor: not-allowed; }
 .rx-check { position: absolute; opacity: 0; pointer-events: none; }
 .rx-box {
   flex-shrink: 0;
@@ -2344,6 +2367,14 @@ textarea:focus-visible,
   opacity: 0.55;
   filter: grayscale(0.35);
 }
+/* An option that needs another treatment first: shown, but not selectable.
+   Must come after .unchecked – a locked row carries both classes, and these
+   two rules have equal specificity, so source order decides. */
+.base-treatment-row.locked {
+  opacity: 0.35;
+  filter: grayscale(0.7);
+}
+.base-treatment-row.locked .addon-checkbox-label { cursor: not-allowed; }
 
 .btn-nearest {
   display: block;

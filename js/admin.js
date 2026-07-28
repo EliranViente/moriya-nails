@@ -340,7 +340,7 @@ async function loadAppointments() {
 async function loadClients() {
   const { data, error } = await MoriyaAuth.sb
     .from('profiles')
-    .select('id, full_name, phone, email, last_appointment, last_login, created_at')
+    .select('id, full_name, phone, email, last_appointment, last_login, created_at, feet_gel_allowed')
     .order('last_appointment', { ascending: false, nullsFirst: false });
   if (error) { console.warn('loadClients:', error.message); dash.clients = []; }
   else dash.clients = data || [];
@@ -998,7 +998,7 @@ function renderClients() {
 
   if (!list.length) {
     const msg = q ? 'לא נמצאו לקוחות תואמות' : 'אין עדיין לקוחות';
-    tbody.innerHTML = `<tr><td colspan="6" class="clients-empty">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="7" class="clients-empty">${msg}</td></tr>`;
     return;
   }
 
@@ -1010,7 +1010,51 @@ function renderClients() {
       <td>${fmtStamp(c.last_appointment, true)}</td>
       <td>${fmtStamp(c.last_login, true)}</td>
       <td>${fmtStamp(c.created_at, false)}</td>
+      <td class="cl-fg">
+        <label class="fg-toggle" title="הרשאה לקביעת תור ללק ג'ל ברגליים">
+          <input type="checkbox" class="fg-check" data-client-id="${c.id}"
+                 ${c.feet_gel_allowed ? 'checked' : ''} />
+          <span class="fg-box"></span>
+        </label>
+      </td>
     </tr>`).join('');
+}
+
+// Grant or revoke a client's access to the feet gel-polish treatment. Every
+// change is confirmed first, and the checkbox is put back the way it was if the
+// admin cancels or the save fails — so the column always shows what is actually
+// in the database. Clients can't set this themselves: the schema's
+// guard_feet_gel_allowed() trigger rejects the change for anyone but an admin.
+async function toggleFeetGel(cb) {
+  const id     = cb.dataset.clientId;
+  const client = dash.clients.find(c => String(c.id) === String(id));
+  if (!client) return;
+
+  const grant = cb.checked;
+  const name  = client.full_name || client.email || 'הלקוחה';
+  const ok = await confirmDialog({
+    icon:  grant ? '🦶' : '🚫',
+    title: grant ? "להוסיף הרשאה ללק ג'ל ברגליים?" : "להסיר את ההרשאה ללק ג'ל ברגליים?",
+    message: grant
+      ? `${name} תראה את הטיפול ותוכל לקבוע אותו (60 דק' · 120 ₪), לבד או יחד עם מניקור.`
+      : `${name} לא תראה יותר את הטיפול ולא תוכל לקבוע אותו. תורים שכבר נקבעו לא ישתנו.`,
+    confirmText: grant ? 'כן, הוסיפי הרשאה' : 'כן, הסירי הרשאה',
+    cancelText:  'ביטול',
+    tone:        grant ? 'safe' : 'danger',
+  });
+  if (!ok) { cb.checked = !grant; return; }
+
+  cb.disabled = true;
+  const { error } = await MoriyaAuth.sb
+    .from('profiles').update({ feet_gel_allowed: grant }).eq('id', id);
+  cb.disabled = false;
+
+  if (error) {
+    cb.checked = !grant;
+    alert('שגיאה בעדכון ההרשאה: ' + error.message);
+    return;
+  }
+  client.feet_gel_allowed = grant;
 }
 
 // Tally a client's appointments by status (matched on user_id).
@@ -1116,18 +1160,30 @@ function wireClientsControls() {
   };
   const close = () => { panel.classList.remove('is-open'); activeId = null; clearActive(); };
 
+  // Feet gel-polish access, toggled per client straight from the table.
+  tbody.addEventListener('change', e => {
+    const cb = e.target.closest('.fg-check');
+    if (cb) toggleFeetGel(cb);
+  });
+
+  // The client's name is the handle for the details card — tapped on a phone,
+  // hovered on a desktop. The rest of the row is inert, so reading the table (or
+  // reaching the permission toggle at its end) never pops the chart open unasked.
+  const nameCellOf = e => e.target.closest('.cl-name');
+
   // Tap/click opens on every device (the only trigger on touch).
   tbody.addEventListener('click', e => {
-    const row = e.target.closest('.client-row');
-    if (row) open(row);
+    const cell = nameCellOf(e);
+    if (cell) open(cell.closest('.client-row'));
   });
 
   if (canHover) {
-    // Desktop: moving between rows updates the left-pinned popover live;
-    // leaving the table hides it so the full table is visible again.
+    // Desktop: moving between names updates the left-pinned popover live, and
+    // moving off them hides it again; so does leaving the table altogether.
     tbody.addEventListener('mouseover', e => {
-      const row = e.target.closest('.client-row');
-      if (row) open(row);
+      const cell = nameCellOf(e);
+      if (cell) open(cell.closest('.client-row'));
+      else      close();
     });
     const wrap = document.querySelector('.clients-table-wrap');
     if (wrap) wrap.addEventListener('mouseleave', close);

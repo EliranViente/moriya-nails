@@ -28,11 +28,41 @@ create table if not exists public.profiles (
   -- The client's most relevant appointment: their upcoming one, or — if none —
   -- the last one that actually happened. Cancelled/no-show are ignored.
   -- Maintained automatically by a trigger on `appointments` (see below).
-  last_appointment timestamptz
+  last_appointment timestamptz,
+  -- Gel polish on the toes is offered to selected clients only. The admin grants
+  -- and revokes it per client from the dashboard; clients without the flag never
+  -- see the treatment. Enforced by guard_feet_gel_allowed() below.
+  feet_gel_allowed boolean not null default false
 );
 -- Add the columns on databases created before they existed.
 alter table public.profiles add column if not exists last_login       timestamptz;
 alter table public.profiles add column if not exists last_appointment timestamptz;
+alter table public.profiles add column if not exists feet_gel_allowed boolean not null default false;
+
+-- Only an admin may grant or revoke the feet gel-polish flag. RLS alone can't
+-- express this: clients need to update their own profile (name/phone on every
+-- booking), which would let them flip this column too. The trigger rejects the
+-- change itself, so the restriction holds no matter who calls the API.
+-- Runs as the caller (no security definer): it only reads the row and raises,
+-- so it needs no elevated privileges. It fires on every profile update but only
+-- objects when this one column actually changes, leaving the last_login and
+-- last_appointment triggers free to keep writing.
+create or replace function public.guard_feet_gel_allowed()
+returns trigger
+language plpgsql set search_path = public
+as $$
+begin
+  if new.feet_gel_allowed is distinct from old.feet_gel_allowed and not public.is_admin() then
+    raise exception 'Only an admin can change feet_gel_allowed';
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_profiles_feet_gel on public.profiles;
+create trigger trg_profiles_feet_gel
+  before update on public.profiles
+  for each row execute function public.guard_feet_gel_allowed();
 
 -- Auto-create a profile row whenever a new user signs up with Google
 create or replace function public.handle_new_user()
@@ -206,6 +236,13 @@ drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own" on public.profiles
   for insert with check (id = auth.uid());
 
+-- The admin manages the feet gel-polish flag from the dashboard, which means
+-- updating other people's profiles. Permissive policies are OR-ed, so this adds
+-- to profiles_update_own rather than replacing it.
+drop policy if exists "profiles_admin_update" on public.profiles;
+create policy "profiles_admin_update" on public.profiles
+  for update using (public.is_admin()) with check (public.is_admin());
+
 -- ----- AVAILABILITY (everyone reads open hours; only admin writes) -----
 drop policy if exists "availability_read" on public.availability;
 create policy "availability_read" on public.availability
@@ -241,7 +278,11 @@ create policy "appointments_admin_delete" on public.appointments
 --  security_invoker keeps the underlying RLS in force, so only an
 --  admin sees every client (a client querying it sees only themselves).
 -- ============================================================
-create or replace view public.clients_report
+-- Dropped rather than replaced: "create or replace view" can only append
+-- columns at the end, so re-running this file after a column is added in the
+-- middle would fail.
+drop view if exists public.clients_report;
+create view public.clients_report
 with (security_invoker = true) as
 select
   p.full_name                                              as "שם",
@@ -254,6 +295,7 @@ select
   count(a.id) filter (where a.status in ('booked','done')) as "סה""כ תורים",
   count(a.id) filter (where a.status = 'done')             as "בוצעו",
   count(a.id) filter (where a.status = 'cancelled')        as "בוטלו",
+  p.feet_gel_allowed                                       as "לק ג'ל ברגליים",
   p.id                                                     as "user_id"
 from public.profiles p
 left join public.appointments a on a.user_id = p.id

@@ -391,16 +391,55 @@
 }
 .clients-table tbody tr:last-child td { border-bottom: none; }
 .clients-table tbody tr.client-row {
-  cursor: pointer;
   transition: background var(--transition);
 }
-.clients-table tbody tr.client-row:hover,
 .clients-table tbody tr.client-row.is-active { background: var(--pink-50); }
 .clients-table tbody tr.client-row.is-active td:first-child {
   box-shadow: inset 3px 0 0 var(--pink-400);
 }
-.clients-table .cl-name { font-weight: 700; color: var(--gray-800); }
+/* Only the name opens the details card, so only the name looks clickable —
+   the row itself highlights once its card is actually open. */
+.clients-table .cl-name {
+  font-weight: 700;
+  color: var(--gray-800);
+  cursor: pointer;
+  transition: color var(--transition);
+}
+.clients-table .cl-name:hover { color: var(--pink-500); text-decoration: underline; }
 .clients-table .cl-muted { color: var(--gray-400); }
+
+/* Feet gel-polish permission – a narrow toggle column at the end of the table.
+   The label fills the whole cell (hence the zeroed padding), so anywhere in the
+   column is a comfortable target rather than just the 24px box itself. */
+.clients-table .cl-fg-th { width: 1%; text-align: center; }
+.clients-table .cl-fg    { text-align: center; padding: 0; }
+.fg-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  padding: 4px 24px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.fg-toggle:hover { background: var(--pink-50); }
+.fg-toggle input { position: absolute; opacity: 0; width: 0; height: 0; }
+.fg-box {
+  width: 24px;
+  height: 24px;
+  border: 2px solid var(--pink-200);
+  border-radius: 7px;
+  background: var(--white);
+  transition: background var(--transition), border-color var(--transition);
+}
+.fg-toggle:hover .fg-box { border-color: var(--pink-400); }
+.fg-toggle input:focus-visible + .fg-box { outline: 2px solid var(--pink-400); outline-offset: 2px; }
+.fg-toggle input:checked + .fg-box {
+  background: var(--pink-400) center / 14px no-repeat
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 8.5l3.5 3.5 7.5-8'/%3E%3C/svg%3E");
+  border-color: var(--pink-400);
+}
+.fg-toggle input:disabled + .fg-box { opacity: 0.5; }
 .clients-loading, .clients-empty {
   text-align: center; color: var(--gray-400); padding: 28px 16px;
 }
