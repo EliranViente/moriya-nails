@@ -8,6 +8,7 @@ require('dotenv').config();
 const express  = require('express');
 const cors     = require('cors');
 const { google } = require('googleapis');
+const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
 
 const app = express();
 app.use(cors());
@@ -109,11 +110,10 @@ app.post('/api/book', async (req, res) => {
     const startDT = new Date(`${date}T${time}:00`);
     const endDT   = new Date(startDT.getTime() + duration * 60_000);
 
-    const serviceNames = (services || []).map(s => s.name).join(', ');
     const description  = [
       `👩 לקוחה: ${clientName}`,
       `📞 טלפון: ${clientPhone}`,
-      `💅 טיפולים: ${serviceNames}`,
+      `💅 טיפולים: ${serviceDetailLines(services).join('\n')}`,
       `⏱ זמן: ${duration} דקות`,
       `💰 מחיר: ${totalPrice} ₪`,
       notes ? `📝 הערות: ${notes}` : ''
@@ -122,7 +122,7 @@ app.post('/api/book', async (req, res) => {
     const event = await calendar.events.insert({
       calendarId: CALENDAR_ID,
       requestBody: {
-        summary:     `💅 ${clientName} – ${serviceNames}`,
+        summary:     `💅 ${clientName} – ${serviceTitle(services)}`,
         description,
         start: { dateTime: startDT.toISOString(), timeZone: TZ },
         end:   { dateTime: endDT.toISOString(),   timeZone: TZ },
@@ -177,7 +177,6 @@ app.post('/api/manage-booking', async (req, res) => {
       // Refresh the title/description when extra services were added on update.
       // Mark the same event "⚠️ ממתין לאישור" in place when the addition needs it.
       if (Array.isArray(services) && services.length && clientName) {
-        const serviceNames = services.map(s => s.name).join(', ');
         const lines = [];
         if (pendingApproval) {
           lines.push(`⚠️ ממתין לאישורך — הלקוחה הוסיפה ${Number(addedMinutes) || 0} דקות לתור (מעל רבע שעה).`);
@@ -186,11 +185,11 @@ app.post('/api/manage-booking', async (req, res) => {
         }
         lines.push(`👩 לקוחה: ${clientName}`);
         lines.push(`📞 טלפון: ${clientPhone}`);
-        lines.push(`💅 טיפולים: ${serviceNames}`);
+        lines.push(`💅 טיפולים: ${serviceDetailLines(services).join('\n')}`);
         lines.push(`⏱ זמן: ${dur} דקות`);
         lines.push(`💰 מחיר: ${totalPrice} ₪`);
         if (notes) lines.push(`📝 הערות: ${notes}`);
-        patchBody.summary     = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 ${clientName} – ${serviceNames}`;
+        patchBody.summary     = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 ${clientName} – ${serviceTitle(services)}`;
         patchBody.description = lines.join('\n');
       }
 

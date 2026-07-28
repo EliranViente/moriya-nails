@@ -493,7 +493,125 @@
             </p>
           </div>
 
-          <button class="btn-next" id="go-step2">המשיכי לבחירת תאריך ושעה ←</button>
+          <!-- The feet gel-polish button appears only for a client allowed to
+               book it (applyFeetGelAccess); on its own the date button keeps the
+               full width it has always had. It stays enabled with nothing picked
+               here – the feet page is reachable without a manicure – while the
+               date button needs at least one treatment somewhere. -->
+          <div class="step-actions">
+            <button class="btn-next" id="go-feet" style="display:none;">🦶 לקביעת תור ללק ג'ל ברגליים</button>
+            <button class="btn-next" id="go-step2">המשיכי לבחירת תאריך ושעה ←</button>
+          </div>
+        </div>
+
+        <!-- ── STEP 1B: Feet gel-polish ──
+             A page of its own between the manicure and the calendar, shown only
+             to a client MoriyaAuth.canBookFeetGel() allows. Nothing here is
+             pre-selected: she opts in, or simply carries on to the date. The
+             markup mirrors step 1 exactly so both pages read the same. -->
+        <div class="booking-step" id="step-feet" style="display:none;">
+          <h3 class="step-title">רוצה גם לק ג'ל ברגליים?</h3>
+          <p class="step-hint">🦶 אפשר להוסיף לאותו תור, או פשוט להמשיך לבחירת התאריך</p>
+
+          <!-- Every option on this page uses the same treatment-row design; the
+               time and price that actually count live in FEET_TREATMENTS. -->
+          <div class="base-treatment-group">
+            <div class="base-treatment-row unchecked">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="feet-check" id="chk-feet-gel" />
+                <div class="custom-check"></div>
+                <span class="t-emoji">🦶</span>
+                <div class="treatment-detail">
+                  <span class="t-name">לק ג'ל ברגליים</span>
+                  <span class="t-desc">מניקור עדין ומריחת לק ג'ל</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">60 דק'</span>
+                  <span class="t-price">120 ₪</span>
+                </div>
+              </label>
+            </div>
+          </div>
+
+          <div class="addons-title-row">
+            <h4>תוספות אופציונליות</h4>
+          </div>
+
+          <div class="base-treatment-group">
+
+            <!-- Double base – locked until the polish above is picked -->
+            <div class="base-treatment-row unchecked">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="feet-check" id="chk-feet-double" />
+                <div class="custom-check"></div>
+                <span class="t-emoji">💎</span>
+                <div class="treatment-detail">
+                  <span class="t-name">שתי שכבות בייס</span>
+                  <span class="t-desc">חיזוק נוסף לציפורניים עם שכבת בייס כפולה</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">+15 דק'</span>
+                  <span class="t-price">+20 ₪</span>
+                </div>
+              </label>
+            </div>
+
+            <!-- French – locked until the polish above is picked -->
+            <div class="base-treatment-row unchecked">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="feet-check" id="chk-feet-french" />
+                <div class="custom-check"></div>
+                <span class="t-emoji">🌸</span>
+                <div class="treatment-detail">
+                  <span class="t-name">פרנץ׳</span>
+                  <span class="t-desc">אפקט פרנץ' קלאסי ואלגנטי</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">+15 דק'</span>
+                  <span class="t-price">+20 ₪</span>
+                </div>
+              </label>
+            </div>
+
+            <!-- Polish removal + reshape – stands on its own, always selectable -->
+            <div class="base-treatment-row unchecked">
+              <label class="addon-checkbox-label">
+                <input type="checkbox" class="feet-check" id="chk-feet-removal" />
+                <div class="custom-check"></div>
+                <span class="t-emoji">💧</span>
+                <div class="treatment-detail">
+                  <span class="t-name">הסרת לק ושיוף צורה</span>
+                  <span class="t-desc">הסרה מקצועית ועדינה של לק קיים ושיוף צורת הציפורן</span>
+                </div>
+                <div class="treatment-nums">
+                  <span class="t-time">30 דק'</span>
+                  <span class="t-price">50 ₪</span>
+                </div>
+              </label>
+            </div>
+
+          </div>
+
+          <p class="feet-locked-hint" id="feet-locked-hint" style="display:none;">
+            ניתן להוסיף שתי שכבות בייס ופרנץ׳ רק יחד עם לק ג'ל ברגליים
+          </p>
+
+          <!-- Live Summary -->
+          <div class="live-summary">
+            <div class="summary-row">
+              <span>⏱ זמן כולל:</span>
+              <strong id="feet-sum-time">—</strong>
+            </div>
+            <div class="summary-row price-row">
+              <span>💰 מחיר כולל:</span>
+              <strong id="feet-sum-price">—</strong>
+            </div>
+          </div>
+
+          <div class="step-nav">
+            <button class="btn-back" id="feet-back">→ חזרה</button>
+            <button class="btn-next" id="feet-next">המשיכי לבחירת תאריך ושעה ←</button>
+          </div>
         </div>
 
         <!-- ── STEP 2: Date & Time ── -->

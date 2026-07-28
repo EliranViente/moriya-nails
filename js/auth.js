@@ -20,6 +20,16 @@ const MoriyaAuth = {
     return this.user && ADMIN_EMAILS.includes((this.user.email || '').toLowerCase());
   },
 
+  // Gel polish on the toes is offered to admins and to the clients the admin has
+  // flagged in the dashboard (profiles.feet_gel_allowed). Everyone else never
+  // sees the treatment. The flag is admin-only to write — see the schema's
+  // guard_feet_gel_allowed() trigger — so this check can't be talked around by
+  // editing a profile from the client side.
+  canBookFeetGel() {
+    if (!this.user) return false;
+    return this.isAdmin() || !!(this.profile && this.profile.feet_gel_allowed);
+  },
+
   displayName() {
     const meta = (this.user && this.user.user_metadata) || {};
     return (this.profile && this.profile.full_name) ||

@@ -14,6 +14,7 @@
  * through row-level security).
  */
 const { google } = require('googleapis');
+const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
@@ -24,7 +25,6 @@ const TZ          = 'Asia/Jerusalem';
 // is marked in place: a "⚠️ ממתין לאישור" prefix on the title plus a note at the
 // top of the description. Moriya approves by removing that prefix from the title.
 function buildEventFields({ clientName, clientPhone, services, duration, totalPrice, notes, pendingApproval, addedMinutes }) {
-  const serviceNames = (services || []).map(s => s.name).join(', ');
   const lines = [];
   if (pendingApproval) {
     lines.push(`⚠️ ממתין לאישורך — הלקוחה הוסיפה ${addedMinutes} דקות לתור (מעל רבע שעה).`);
@@ -33,11 +33,11 @@ function buildEventFields({ clientName, clientPhone, services, duration, totalPr
   }
   lines.push(`👩 לקוחה: ${clientName}`);
   lines.push(`📞 טלפון: ${clientPhone}`);
-  lines.push(`💅 טיפולים: ${serviceNames}`);
+  lines.push(`💅 טיפולים: ${serviceDetailLines(services).join('\n')}`);
   lines.push(`⏱ זמן: ${duration} דקות`);
   lines.push(`💰 מחיר: ${totalPrice} ₪`);
   if (notes) lines.push(`📝 הערות: ${notes}`);
-  const summary = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 תור: ${clientName} – ${serviceNames}`;
+  const summary = `${pendingApproval ? '⚠️ ממתין לאישור – ' : ''}💅 תור: ${clientName} – ${serviceTitle(services)}`;
   return { summary, description: lines.join('\n') };
 }
 
@@ -60,7 +60,7 @@ async function sendApprovalEmail({ clientName, clientPhone, services, date, time
   const from   = process.env.APPROVAL_EMAIL_FROM || 'Moriya Nails <onboarding@resend.dev>';
   if (!apiKey) return; // not configured — skip silently
 
-  const serviceNames = (services || []).map(s => s.name).join(', ');
+  const serviceNames = serviceTitle(services);
   const calLink = 'https://calendar.google.com/calendar/u/0/r';
   const html = `
     <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;

@@ -48,6 +48,69 @@ const RESCHEDULE_EXTRAS = [
   { id: 'toolkit', emoji: '💼', name: 'סט כלים אישי',                            desc: 'סט כלים אישי הנשמר על שמך לטיפולים הבאים',      type: 'checkbox', time: 0,  price: 30 },
 ];
 
+// Gel polish on the toes and its own add-ons – treatments booked alongside the
+// manicure, chosen on a page of their own (step 1B) between the manicure and the
+// calendar. Every one carries `separate: true`, so Moriya's calendar lists them
+// after the manicure behind "בנוסף,"; their time and price join the appointment
+// total like anything else, which is what keeps every calendar constraint (the
+// breaks, the 90-min grid, the 18:00 close) applying to them unchanged.
+// `requiresGel` mirrors step 1's data-requires-base: those two only make sense on
+// top of the polish itself, while the removal stands on its own. The names repeat
+// step 1's wording, so everything that matches a saved service back to a control
+// compares `separate` alongside the name.
+// Offered only to clients MoriyaAuth.canBookFeetGel() allows.
+const FEET_TREATMENTS = [
+  { id: 'feetgel',     emoji: '🦶', name: "לק ג'ל ברגליים",    desc: "מניקור עדין ומריחת לק ג'ל",                  checkId: 'chk-feet-gel',     type: 'checkbox', time: 60, price: 120, separate: true },
+  { id: 'feetdouble',  emoji: '💎', name: 'שתי שכבות בייס',     desc: 'חיזוק נוסף עם שכבת בייס כפולה',              checkId: 'chk-feet-double',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
+  { id: 'feetfrench',  emoji: '🌸', name: 'פרנץ׳',              desc: "אפקט פרנץ' קלאסי ואלגנטי",                   checkId: 'chk-feet-french',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
+  { id: 'feetremoval', emoji: '💧', name: 'הסרת לק ושיוף צורה', desc: 'הסרה מקצועית ועדינה של לק קיים ושיוף הצורה', checkId: 'chk-feet-removal', type: 'checkbox', time: 30, price: 50,  separate: true },
+];
+
+function canBookFeetGel() {
+  return !!(window.MoriyaAuth && MoriyaAuth.canBookFeetGel());
+}
+
+// The feet treatments selected on step 1B, in the same {name,time,price} shape as
+// every other service. Also keeps the page itself in order: the add-ons that need
+// the polish are hidden and cleared without it, exactly as step 1 handles the
+// add-ons that need the base manicure.
+function collectFeetSelection() {
+  const allowed = canBookFeetGel();
+  const gelOn   = allowed && !!document.getElementById('chk-feet-gel')?.checked;
+  const picked  = [];
+  let anyLocked = false;
+
+  FEET_TREATMENTS.forEach(t => {
+    const cb = document.getElementById(t.checkId);
+    if (!cb) return;
+    if (!allowed) { cb.checked = false; return; }
+
+    // Add-ons that need the polish stay on the page but can't be ticked without
+    // it, so the client always sees everything on offer. The greyed-out styling
+    // of an unticked row is handled by the .base-treatment-row loop in
+    // recalculate(); `locked` is what marks it as unavailable.
+    if (t.requiresGel) {
+      if (!gelOn && cb.checked) cb.checked = false;
+      cb.disabled = !gelOn;
+      cb.closest('.base-treatment-row')?.classList.toggle('locked', !gelOn);
+      if (!gelOn) anyLocked = true;
+    }
+    if (cb.checked) picked.push({ name: t.name, time: t.time, price: t.price, separate: true });
+  });
+
+  const hint = document.getElementById('feet-locked-hint');
+  if (hint) hint.style.display = anyLocked ? 'block' : 'none';
+  return picked;
+}
+
+// The extras a client may edit while rescheduling. The feet treatments are only
+// on the list for a client allowed to book them — which also means that if her
+// access is revoked while she has one booked, splitReschedule() leaves it in the
+// locked part of the appointment instead of silently dropping it.
+function rescheduleExtrasList() {
+  return canBookFeetGel() ? [...RESCHEDULE_EXTRAS, ...FEET_TREATMENTS] : RESCHEDULE_EXTRAS;
+}
+
 // Extras chosen for the current reschedule, in the same {name,time,price} shape
 // as the booking flow so they can be merged straight back onto the appointment.
 let rescheduleExtras = [];
@@ -193,13 +256,18 @@ function recalculate() {
   state.baseName  = selectedBase?.querySelector('.t-name')?.textContent.trim() || '';
   state.baseTime  = selectedBase ? (parseInt(selectedBase.dataset.time)  || 0) : 0;
   state.basePrice = selectedBase ? (parseInt(selectedBase.dataset.price) || 0) : 0;
+  // The feet treatments live on their own page (step 1B) and are independent of
+  // the two bases – they can ride along with either one, or be the appointment.
+  const feetPicked = collectFeetSelection();
   document.querySelectorAll('.base-treatment-row').forEach(row => {
-    const cb = row.querySelector('.base-check');
+    const cb = row.querySelector('.base-check, .feet-check');
     row.classList.toggle('unchecked', !(cb && cb.checked));
   });
 
-  // Hide/show addon rows that only apply with the base manicure
-  document.querySelectorAll('.addon-row[data-requires-base="true"]').forEach(row => {
+  // Hide/show addon rows that only apply with the base manicure. Every add-on
+  // query below is scoped to step 1, so the feet page can never be swept up by
+  // it – its options are collected by collectFeetSelection() instead.
+  document.querySelectorAll('#step-1 .addon-row[data-requires-base="true"]').forEach(row => {
     row.style.display = baseChecked ? '' : 'none';
     if (!baseChecked) {
       const cb = row.querySelector('input[type="checkbox"]');
@@ -210,13 +278,13 @@ function recalculate() {
   // Personal toolkit add-on: selectable only alongside another treatment.
   // "Another treatment" = the base manicure, any other checked add-on, or any
   // quantity add-on with a count above zero.
-  let hasOtherTreatment = baseChecked;
-  document.querySelectorAll('.addon-row[data-type="checkbox"]').forEach(row => {
+  let hasOtherTreatment = baseChecked || feetPicked.length > 0;
+  document.querySelectorAll('#step-1 .addon-row[data-type="checkbox"]').forEach(row => {
     if (row.classList.contains('toolkit-row')) return;
     const cb = row.querySelector('input[type="checkbox"]');
     if (cb && cb.checked) hasOtherTreatment = true;
   });
-  document.querySelectorAll('.addon-row[data-type="quantity"] .qty-input').forEach(input => {
+  document.querySelectorAll('#step-1 .addon-row[data-type="quantity"] .qty-input').forEach(input => {
     if ((parseInt(input.value) || 0) > 0) hasOtherTreatment = true;
   });
   const toolkitCb   = document.getElementById('chk-toolkit');
@@ -234,7 +302,7 @@ function recalculate() {
   const addons   = [];
 
   // Checkbox add-ons
-  document.querySelectorAll('.addon-row[data-type="checkbox"]').forEach(row => {
+  document.querySelectorAll('#step-1 .addon-row[data-type="checkbox"]').forEach(row => {
     const checkbox = row.querySelector('input[type="checkbox"]');
     if (!checkbox) return;
     if (checkbox.checked) {
@@ -266,7 +334,7 @@ function recalculate() {
   }
 
   // Quantity add-ons
-  document.querySelectorAll('.addon-row[data-type="quantity"]').forEach(row => {
+  document.querySelectorAll('#step-1 .addon-row[data-type="quantity"]').forEach(row => {
     const qtyInput = row.querySelector('.qty-input');
     if (!qtyInput) return;
     const qty      = Math.max(0, parseInt(qtyInput.value) || 0);
@@ -287,6 +355,14 @@ function recalculate() {
     if (qty > 0) addons.push({ name: `${name} (×${qty})`, time: t, price: p });
   });
 
+  // Feet treatments last, so they read as the extra appointment they are – on the
+  // summary, on the confirmation card and in Moriya's calendar event.
+  feetPicked.forEach(t => {
+    totalTime  += t.time;
+    totalPrice += t.price;
+    addons.push(t);
+  });
+
   state.totalTime  = totalTime;
   state.totalPrice = totalPrice;
   state.addons     = addons;
@@ -294,9 +370,18 @@ function recalculate() {
   document.getElementById('sum-time').textContent  = totalTime + ' דקות';
   document.getElementById('sum-price').textContent = totalPrice + ' ₪';
 
-  // Can't continue with nothing selected
-  const goStep2 = document.getElementById('go-step2');
-  if (goStep2) goStep2.disabled = totalTime === 0;
+  // Step 1B carries the same running total, covering the whole appointment.
+  const feetTimeEl  = document.getElementById('feet-sum-time');
+  const feetPriceEl = document.getElementById('feet-sum-price');
+  if (feetTimeEl)  feetTimeEl.textContent  = totalTime + ' דקות';
+  if (feetPriceEl) feetPriceEl.textContent = totalPrice + ' ₪';
+
+  // Can't reach the calendar with nothing selected on either page. The button
+  // onto the feet page stays enabled – it is reachable without a manicure.
+  const goStep2  = document.getElementById('go-step2');
+  const feetNext = document.getElementById('feet-next');
+  if (goStep2)  goStep2.disabled  = totalTime === 0;
+  if (feetNext) feetNext.disabled = totalTime === 0;
 
   updateBookingSummary();
 }
@@ -389,6 +474,24 @@ document.querySelectorAll('.base-check').forEach(cb => {
     recalculate();
   });
 });
+// Every option on the feet page recalculates: the polish also gates two of them.
+document.querySelectorAll('.feet-check').forEach(cb => {
+  cb.addEventListener('change', recalculate);
+});
+
+// Reveal the route onto the feet page only to a client allowed to book it, clear
+// every feet selection the moment that access ends (signing out, or the admin
+// revoking it before a re-login) so nothing can ride along on a booking
+// unnoticed, and never strand her on a page she can no longer use.
+function applyFeetGelAccess() {
+  const allowed = canBookFeetGel();
+  const btn = document.getElementById('go-feet');
+  if (btn) btn.style.display = allowed ? '' : 'none';
+  if (!allowed && currentBookingStep === 'feet') showStep(1);
+  recalculate();   // collectFeetSelection() clears the checkboxes when barred
+}
+document.addEventListener('moriya-auth-changed', applyFeetGelAccess);
+
 document.querySelectorAll('.qty-input').forEach(input => {
   input.addEventListener('input', () => {
     let v = parseInt(input.value) || 0;
@@ -416,8 +519,12 @@ document.getElementById('chk-deco')?.addEventListener('change', recalculate);
 
 recalculate(); // initial
 
-// Step 1 → Step 2
-document.getElementById('go-step2').addEventListener('click', () => {
+// The page the calendar's "back" returns to – whichever one led into it.
+let calendarReturnStep = 1;
+
+// → Step 2, from whichever page precedes the calendar this time round.
+function goToCalendarStep(from) {
+  calendarReturnStep = from;
   exitRescheduleMode();                      // fresh booking, not a reschedule
   state.selectedTime = null;                 // reset – duration may have changed
   const next = document.getElementById('go-step3');
@@ -425,7 +532,15 @@ document.getElementById('go-step2').addEventListener('click', () => {
   showStep(2);
   renderCalendar();
   if (state.selectedDate) loadTimeSlots(state.selectedDate);
-});
+}
+
+// Step 1 offers both onward routes: the calendar, or the feet gel-polish page.
+document.getElementById('go-step2').addEventListener('click', () => goToCalendarStep(1));
+document.getElementById('go-feet')?.addEventListener('click', () => showStep('feet'));
+
+// Step 1B → Step 2, or back to the manicure.
+document.getElementById('feet-next')?.addEventListener('click', () => goToCalendarStep('feet'));
+document.getElementById('feet-back')?.addEventListener('click', () => showStep(1));
 
 // ═══════════════════════════════════════════════════════════════════════════════
 //  STEP 2 – Calendar & Time Slots
@@ -939,7 +1054,8 @@ document.getElementById('back-step1')?.addEventListener('click', () => {
     openMyAppointments();
     return;
   }
-  showStep(1);
+  // Back to whichever page led into the calendar.
+  showStep(canBookFeetGel() ? calendarReturnStep : 1);
 });
 document.getElementById('go-step3')?.addEventListener('click', () => {
   if (editingAppointment) { updateAppointment(); return; }   // reschedule flow
@@ -1257,8 +1373,8 @@ function showSuccess(name, phone, notes) {
 
 // ─── Step navigation ──────────────────────────────────────────────────────────
 function showStep(num) {
-  if (typeof num === 'number') currentBookingStep = num;
-  ['1','2','3','success','error'].forEach(id => {
+  if (typeof num === 'number' || num === 'feet') currentBookingStep = num;
+  ['1','feet','2','3','success','error'].forEach(id => {
     const el = document.getElementById(`step-${id}`);
     if (el) el.style.display = 'none';
   });
@@ -1266,12 +1382,15 @@ function showStep(num) {
   if (target) target.style.display = 'block';
 
   // Update step indicators. A completed step doubles as a shortcut back to it.
+  // The feet gel-polish page is a second page of step 1, so the 1-2-3 bar stays
+  // on step 1 while it is open.
+  const barStep = num === 'feet' ? 1 : num;
   document.querySelectorAll('.step-item').forEach(item => {
     const n = parseInt(item.dataset.step);
     item.classList.remove('active', 'done');
-    if (typeof num === 'number') {
-      if (n === num)  item.classList.add('active');
-      if (n <  num)   item.classList.add('done');
+    if (typeof barStep === 'number') {
+      if (n === barStep) item.classList.add('active');
+      if (n <  barStep)  item.classList.add('done');
     }
     const canGoBack = item.classList.contains('done');
     item.classList.toggle('clickable', canGoBack);
@@ -1504,13 +1623,18 @@ function extrasTotalPrice() { return rescheduleExtras.reduce((s, e) => s + e.pri
 function splitReschedule(appt) {
   const base = [];
   const prefill = {};
+  const editable = rescheduleExtrasList();
+  // Step 1B repeats step 1's wording ("שתי שכבות בייס", "הסרת לק ושיוף צורה"),
+  // so a name alone can't tell a hand treatment from a foot one – `separate` is
+  // what distinguishes them, and it has to match too.
+  const sameKind = (x, svc) => !!x.separate === !!svc.separate;
   (appt.services || []).forEach(svc => {
     const q = /^(.+?)\s*\(×(\d+)\)\s*$/.exec(svc.name || '');
     if (q) {
-      const cat = RESCHEDULE_EXTRAS.find(x => x.type === 'quantity' && x.name === q[1].trim());
+      const cat = editable.find(x => x.type === 'quantity' && x.name === q[1].trim() && sameKind(x, svc));
       if (cat) { prefill[cat.id] = (prefill[cat.id] || 0) + (parseInt(q[2], 10) || 0); return; }
     } else {
-      const cat = RESCHEDULE_EXTRAS.find(x => x.type === 'checkbox' && x.name === svc.name);
+      const cat = editable.find(x => x.type === 'checkbox' && x.name === svc.name && sameKind(x, svc));
       if (cat) { prefill[cat.id] = true; return; }
     }
     base.push(svc); // unmatched (e.g. the base manicure) → stays locked
@@ -1532,7 +1656,7 @@ function renderRescheduleExtras() {
     lockedSvc.textContent = names.length ? names.join(' · ') : "מניקור לק ג'ל";
   }
 
-  list.innerHTML = RESCHEDULE_EXTRAS.map(x => {
+  list.innerHTML = rescheduleExtrasList().map(x => {
     if (x.type === 'checkbox') {
       const priceText = x.priceLabel ? x.priceLabel : `+${x.price} ₪`;
       return `
@@ -1598,14 +1722,27 @@ function recalcRescheduleExtras() {
   const list = document.getElementById('rx-list');
   if (!list || !editingAppointment) return;
 
+  // The feet add-ons only apply on top of the polish itself – same rule as step
+  // 1B, and shown the same way: still listed, but not selectable without it.
+  const feetGelOn = !!list.querySelector('.rx-check[data-id="feetgel"]')?.checked;
+  rescheduleExtrasList().forEach(x => {
+    if (!x.requiresGel) return;
+    const cb = list.querySelector(`.rx-check[data-id="${x.id}"]`);
+    if (!cb) return;
+    if (!feetGelOn && cb.checked) cb.checked = false;
+    cb.disabled = !feetGelOn;
+    cb.closest('.rx-row')?.classList.toggle('locked', !feetGelOn);
+  });
+
   const extras = [];
-  RESCHEDULE_EXTRAS.forEach(x => {
+  rescheduleExtrasList().forEach(x => {
     if (x.type === 'checkbox') {
       const cb  = list.querySelector(`.rx-check[data-id="${x.id}"]`);
       const row = cb && cb.closest('.rx-row');
       if (cb && cb.checked) {
         const e = { name: x.name, time: x.time, price: x.price };
         if (x.priceLabel) e.priceLabel = x.priceLabel;
+        if (x.separate)   e.separate   = true;
         extras.push(e);
         row && row.classList.add('checked');
       } else if (row) {
