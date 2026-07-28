@@ -11,6 +11,64 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
+
+  <!-- ──────────────── FRESH START FOR SIGNED-OUT VISITORS ──────────────── -->
+  <!-- A signed-in client keeps her place across a reload – she is usually in the
+       middle of the booking flow and losing it would be infuriating. A visitor
+       who is not signed in should land back at the very top on every refresh, on
+       the logo and Moriya's welcome text, exactly as if she had just opened the
+       site. This runs inline in <head>, before the body is parsed, so it gets in
+       ahead of both the browser's scroll restoration and its jump to a "#section"
+       anchor. -->
+  <script>
+  (function freshStartWhenSignedOut() {
+    // The Supabase session lives in localStorage under sb-<project>-auth-token.
+    // Reading the key directly is the only *synchronous* way to know this early
+    // whether the visitor is signed in – the SDK only answers asynchronously,
+    // long after the browser has already restored the old scroll offset.
+    function hasSession() {
+      try {
+        for (let i = 0; i < localStorage.length; i++) {
+          const k = localStorage.key(i);
+          if (/^sb-.+-auth-token$/.test(k) && localStorage.getItem(k)) return true;
+        }
+      } catch (_) { /* storage blocked (private mode) – treat as signed out */ }
+      return false;
+    }
+
+    // Mid-login, Google hands the session back on the URL itself (?code= for the
+    // PKCE flow, #access_token= for the implicit one). Rewriting the URL now
+    // would throw that sign-in away, so leave such a load completely alone.
+    const isAuthCallback = /[?&](code|error)=/.test(window.location.search) ||
+                           /(access_token|refresh_token|error)=/.test(window.location.hash);
+
+    if (isAuthCallback || hasSession()) return;
+
+    const canControlRestore = 'scrollRestoration' in history;
+    if (canControlRestore) history.scrollRestoration = 'manual';
+
+    // Drop a "#booking"-style anchor, otherwise the browser scrolls to that
+    // section the moment it is parsed. Auth callbacks are excluded above, so no
+    // meaningful hash is ever lost here.
+    if (window.location.hash) {
+      history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+
+    const toTop = () => window.scrollTo(0, 0);
+    toTop();
+    document.addEventListener('DOMContentLoaded', toTop);
+    window.addEventListener('load', () => {
+      // Some browsers restore the previous offset just after 'load' fires, so
+      // pin the top for one more frame before handing scrolling back to the
+      // browser – in-page anchors and the back button must keep working.
+      toTop();
+      requestAnimationFrame(() => {
+        toTop();
+        if (canControlRestore) history.scrollRestoration = 'auto';
+      });
+    });
+  })();
+  </script>
 </head>
 <body>
 
