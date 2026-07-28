@@ -241,16 +241,21 @@ ul { list-style: none; }
   .nav-auth-btn.google span { display: none; }  /* show just the Google icon */
   .nav-auth-btn.google { padding: 9px 12px; }
   .nav-cluster { gap: 10px; }
+
+  /* Each bar shows exactly two buttons on phones: admins get the dashboard link
+     next to "התנתקות", clients get "התורים שלי" in its place. Both keep their
+     desktop sizing — the row has room for two without shrinking anything. */
+  #navbar.is-admin .nav-auth-btn.myappts { display: none; }
 }
 
-/* "התורים שלי" lives in the top bar on desktop, but moves into the hamburger
-   menu on phones so the logo + remaining auth buttons never crowd the row.
-   The menu item is hidden by default; it only appears on phones once logged in
-   (auth.js flags #navbar.is-authed). */
-.nav-myappts-item { display: none; }
-@media (max-width: 720px) {
-  .nav-auth-btn.myappts { display: none; }                 /* moved into the menu */
-  #navbar.is-authed .nav-myappts-item { display: block; }
+/* Safety net for narrow phones only (≥376px keeps the full-size layout above).
+   "התורים שלי" is the widest of the two labels, so the client bar runs out of
+   room first — buy it back from the logo and the gaps, never from the buttons. */
+@media (max-width: 380px) {
+  #navbar.is-client .nav-inner { padding: 0 14px; }
+  #navbar.is-client .nav-logo-img { height: 34px; }
+  #navbar.is-client .nav-cluster { gap: 8px; }
+  #navbar.is-client .nav-auth { gap: 8px; }
 }
 
 .hamburger {
@@ -959,8 +964,13 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   padding-inline: 18px;
   font-size: 0.98rem;
 }
+/* Stacked on a narrow phone. A grid rather than a column flexbox: equal rows
+   keep both buttons exactly the same height even when one carries an emoji,
+   whose glyph is taller than the Hebrew text and would otherwise stretch its
+   own button on its own. */
 @media (max-width: 560px) {
-  .step-actions { flex-direction: column; }
+  .step-actions { display: grid; grid-auto-rows: 1fr; }
+  .step-actions .btn-next { width: 100%; }
 }
 
 .btn-back {
