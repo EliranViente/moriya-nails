@@ -9,6 +9,7 @@ const express  = require('express');
 const cors     = require('cors');
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
+const { deleteClient } = require('../shared/delete-client');
 
 const app = express();
 app.use(cors());
@@ -224,6 +225,18 @@ function toMinutes(isoString, tz) {
   const m = parseInt(local.find(p => p.type === 'minute').value);
   return h * 60 + m;
 }
+
+// ─── POST /api/delete-client ──────────────────────────────────────────────────
+// Removes a client (parity with the Netlify function – same shared implementation).
+// Needs SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY in the local .env; without them
+// it answers 503 not_configured rather than half-doing the job.
+app.post('/api/delete-client', async (req, res) => {
+  const { status, body } = await deleteClient({
+    clientId:    req.body && req.body.clientId,
+    accessToken: req.body && req.body.accessToken,
+  });
+  res.status(status).json(body);
+});
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
