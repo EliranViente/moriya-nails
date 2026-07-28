@@ -180,12 +180,32 @@
       <section class="admin-section">
         <div class="section-head">
           <h2>לקוחות</h2>
-          <input type="search" id="clients-search" class="clients-search"
-                 placeholder="חיפוש לפי שם, טלפון או אימייל…" aria-label="חיפוש לקוחות" />
+          <div class="section-tools clients-tools">
+            <input type="search" id="clients-search" class="clients-search"
+                   placeholder="חיפוש לפי שם, טלפון או אימייל…" aria-label="חיפוש לקוחות" />
+            <!-- The list is read-only until "עריכת הרשימה" is picked from here.
+                 Granting the feet gel-polish permission and removing a client are
+                 both one click and both hard to undo, so they stay behind this. -->
+            <div class="clients-menu-wrap">
+              <button type="button" class="clients-menu-btn" id="clients-menu-btn"
+                      aria-haspopup="true" aria-expanded="false" aria-controls="clients-menu"
+                      aria-label="פעולות על רשימת הלקוחות" title="פעולות">⋮</button>
+              <div class="clients-menu" id="clients-menu" role="menu" hidden>
+                <button type="button" class="clients-menu-item" id="clients-edit-toggle" role="menuitem">
+                  <span class="cmi-icon">✏️</span><span id="clients-edit-label">עריכת הרשימה</span>
+                </button>
+              </div>
+            </div>
+          </div>
         </div>
+        <!-- Shown only while editing, so it is never ambiguous which mode the table is in. -->
+        <p class="clients-edit-banner" id="clients-edit-banner" hidden>
+          מצב עריכה פעיל — אפשר לשנות הרשאות ולהסיר לקוחות.
+          <button type="button" class="clients-edit-done" id="clients-edit-done">סיום עריכה</button>
+        </p>
         <div class="clients-layout">
           <div class="clients-table-wrap">
-            <table class="clients-table">
+            <table class="clients-table" id="clients-table">
               <thead>
                 <tr>
                   <th>שם</th>
@@ -196,10 +216,12 @@
                   <th>תאריך הרשמה</th>
                   <!-- Grants a client access to the feet gel-polish treatment. -->
                   <th class="cl-fg-th" title="הרשאה לקביעת תור ללק ג'ל ברגליים">ג'ל ברגליים</th>
+                  <!-- Removal column – revealed by edit mode (see .is-editing in admin.css). -->
+                  <th class="cl-del-th"><span class="sr-only">הסרה</span></th>
                 </tr>
               </thead>
               <tbody id="clients-tbody">
-                <tr><td colspan="7" class="clients-loading"><div class="spinner"></div><span>טוענת לקוחות…</span></td></tr>
+                <tr><td colspan="8" class="clients-loading"><div class="spinner"></div><span>טוענת לקוחות…</span></td></tr>
               </tbody>
             </table>
           </div>

@@ -161,6 +161,7 @@ const dash = {
   clients: [],        // all client profiles (admin sees everything via RLS)
   clientsCount: 0,
   clientsQuery: '',   // live search filter for the clients table
+  clientsEditing: false,  // edit mode: permissions and removal are live only while on
   chartRange: 30,
   apptFilter: 'upcoming',   // 'upcoming' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
@@ -341,7 +342,8 @@ async function loadClients() {
   const { data, error } = await MoriyaAuth.sb
     .from('profiles')
     .select('id, full_name, phone, email, last_appointment, last_login, created_at, feet_gel_allowed')
-    .order('last_appointment', { ascending: false, nullsFirst: false });
+    // Newest sign-ups on top, the longest-standing clients at the bottom.
+    .order('created_at', { ascending: false, nullsFirst: false });
   if (error) { console.warn('loadClients:', error.message); dash.clients = []; }
   else dash.clients = data || [];
   dash.clientsCount = dash.clients.length;
@@ -998,10 +1000,15 @@ function renderClients() {
 
   if (!list.length) {
     const msg = q ? 'לא נמצאו לקוחות תואמות' : 'אין עדיין לקוחות';
-    tbody.innerHTML = `<tr><td colspan="7" class="clients-empty">${msg}</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" class="clients-empty">${msg}</td></tr>`;
     return;
   }
 
+  // Out of edit mode the permission checkbox is disabled outright, so the column
+  // can still be read but not changed by a stray tap. The remove button is only
+  // rendered while editing; CSS hides its column too, so the table keeps its
+  // shape.
+  const editing = dash.clientsEditing;
   tbody.innerHTML = list.map(c => `
     <tr class="client-row" data-client-id="${c.id}">
       <td class="cl-name">${c.full_name || MUTED}</td>
@@ -1013,11 +1020,37 @@ function renderClients() {
       <td class="cl-fg">
         <label class="fg-toggle" title="הרשאה לקביעת תור ללק ג'ל ברגליים">
           <input type="checkbox" class="fg-check" data-client-id="${c.id}"
-                 ${c.feet_gel_allowed ? 'checked' : ''} />
+                 ${c.feet_gel_allowed ? 'checked' : ''} ${editing ? '' : 'disabled'} />
           <span class="fg-box"></span>
         </label>
       </td>
+      <td class="cl-del">
+        ${editing ? `<button type="button" class="cl-del-btn" data-client-id="${c.id}"
+                       title="הסרת הלקוחה" aria-label="הסרת ${escAttr(c.full_name || c.email || 'הלקוחה')}">🗑</button>` : ''}
+      </td>
     </tr>`).join('');
+}
+
+// Escape a value going into a double-quoted HTML attribute.
+function escAttr(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+// Turn the clients list's edit mode on or off and re-render to match. Leaving
+// edit mode is always allowed; entering it is a deliberate choice from the ⋮ menu.
+function setClientsEditing(on) {
+  dash.clientsEditing = !!on;
+
+  const table  = document.getElementById('clients-table');
+  const banner = document.getElementById('clients-edit-banner');
+  const label  = document.getElementById('clients-edit-label');
+  if (table)  table.classList.toggle('is-editing', dash.clientsEditing);
+  if (banner) banner.hidden = !dash.clientsEditing;
+  if (label)  label.textContent = dash.clientsEditing ? 'סיום עריכה' : 'עריכת הרשימה';
+
+  renderClients();
 }
 
 // Grant or revoke a client's access to the feet gel-polish treatment. Every
@@ -1029,6 +1062,10 @@ async function toggleFeetGel(cb) {
   const id     = cb.dataset.clientId;
   const client = dash.clients.find(c => String(c.id) === String(id));
   if (!client) return;
+
+  // Belt and braces: the checkbox is rendered disabled outside edit mode, so this
+  // should be unreachable — but the permission must never turn on a UI detail.
+  if (!dash.clientsEditing) { cb.checked = !!client.feet_gel_allowed; return; }
 
   const grant = cb.checked;
   const name  = client.full_name || client.email || 'הלקוחה';
@@ -1055,6 +1092,78 @@ async function toggleFeetGel(cb) {
     return;
   }
   client.feet_gel_allowed = grant;
+}
+
+// Remove a client from the salon. Only reachable from edit mode, and always
+// confirmed first — spelling out what survives, because "delete" reads like it
+// might take the appointment history with it, and it doesn't.
+//
+// The actual deletion runs server-side (/api/delete-client): it removes the
+// Google identity itself, not just the profile row, so a deleted client cannot
+// linger as a signed-in user with no profile. Her past appointments stay on the
+// books under her name, so revenue and the charts are unaffected.
+async function deleteClient(btn) {
+  const id     = btn.dataset.clientId;
+  const client = dash.clients.find(c => String(c.id) === String(id));
+  if (!client || !dash.clientsEditing) return;
+
+  const name  = client.full_name || client.email || 'הלקוחה';
+  const today = todayStr();
+  // Appointments she has coming up: those stay in the calendar and in the
+  // dashboard, but she loses the ability to see or change them herself.
+  const upcoming = dash.appointments.filter(a =>
+    a.user_id === client.id && a.status === 'booked' && a.date >= today).length;
+
+  const ok = await confirmDialog({
+    icon:  '🗑',
+    title: `להסיר את ${name} מרשימת הלקוחות?`,
+    message: upcoming
+      ? `ל${name} יש ${upcoming === 1 ? 'תור עתידי אחד' : `${upcoming} תורים עתידיים`}. התורים יישארו ביומן ובלוח הבקרה, אבל היא לא תוכל לראות או לשנות אותם יותר. כדאי לבטל אותם קודם אם אינך מעוניינת בהם.`
+      : `${name} תוסר מהרשימה ותנותק מהאתר. היסטוריית התורים וההכנסות שלה תישמר.`,
+    html: `<p style="margin:0;color:#8a8a8a;font-size:0.85rem;">אם היא תתחבר שוב עם Google בעתיד, היא תיווצר כלקוחה חדשה — בלי ההרשאות שהיו לה.</p>`,
+    confirmText: 'כן, הסירי אותה',
+    cancelText:  'ביטול',
+    tone:        'danger',
+  });
+  if (!ok) return;
+
+  btn.disabled = true;
+  let res, payload;
+  try {
+    const accessToken = await getAccessToken();
+    res = await fetch(`${API_BASE}/api/delete-client`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ clientId: id, accessToken }),
+    });
+    payload = await res.json().catch(() => ({}));
+  } catch (e) {
+    btn.disabled = false;
+    alert('ההסרה נכשלה: ' + e.message);
+    return;
+  }
+
+  if (!res.ok || !payload.success) {
+    btn.disabled = false;
+    const reasons = {
+      not_configured:     'ההסרה לא מוגדרת בשרת (חסר מפתח service role).',
+      not_authorized:     'אין הרשאה לבצע את הפעולה.',
+      cannot_delete_self: 'אי אפשר להסיר את המשתמשת שאיתה את מחוברת.',
+      cannot_delete_admin:'אי אפשר להסיר משתמשת ניהול.',
+    };
+    alert('ההסרה נכשלה: ' + (reasons[payload.error] || payload.error || `שגיאת שרת (${res.status})`));
+    return;
+  }
+
+  // Drop her locally rather than reloading the whole dashboard, and detach the
+  // appointments that were hers so the details popover can't be opened on a
+  // client who no longer exists.
+  dash.clients = dash.clients.filter(c => String(c.id) !== String(id));
+  dash.clientsCount = dash.clients.length;
+  dash.appointments.forEach(a => { if (a.user_id === client.id) a.user_id = null; });
+
+  renderKPIs();
+  renderClients();
+  document.getElementById('client-panel')?.classList.remove('is-open');
 }
 
 // Tally a client's appointments by status (matched on user_id).
@@ -1137,6 +1246,8 @@ function wireClientsControls() {
     renderClients();
   });
 
+  wireClientsMenu();
+
   const tbody = document.getElementById('clients-tbody');
   const panel = document.getElementById('client-panel');
   if (!tbody || !panel) return;
@@ -1161,9 +1272,16 @@ function wireClientsControls() {
   const close = () => { panel.classList.remove('is-open'); activeId = null; clearActive(); };
 
   // Feet gel-polish access, toggled per client straight from the table.
+  // Only live in edit mode — outside it the checkbox is rendered disabled.
   tbody.addEventListener('change', e => {
     const cb = e.target.closest('.fg-check');
     if (cb) toggleFeetGel(cb);
+  });
+
+  // Removing a client. The button only exists while editing.
+  tbody.addEventListener('click', e => {
+    const btn = e.target.closest('.cl-del-btn');
+    if (btn) { e.stopPropagation(); deleteClient(btn); }
   });
 
   // The client's name is the handle for the details card — tapped on a phone,
@@ -1193,6 +1311,50 @@ function wireClientsControls() {
     if (closeBtn) closeBtn.addEventListener('click', close);
     panel.addEventListener('click', e => { if (e.target === panel) close(); });
   }
+}
+
+// The ⋮ menu above the clients table. It holds a single entry today — edit mode
+// on/off — but is the place any future list-wide action belongs.
+function wireClientsMenu() {
+  const btn    = document.getElementById('clients-menu-btn');
+  const menu   = document.getElementById('clients-menu');
+  const toggle = document.getElementById('clients-edit-toggle');
+  const done   = document.getElementById('clients-edit-done');
+  if (!btn || !menu || !toggle) return;
+
+  const closeMenu = () => {
+    menu.hidden = true;
+    btn.classList.remove('is-open');
+    btn.setAttribute('aria-expanded', 'false');
+  };
+  const openMenu = () => {
+    menu.hidden = false;
+    btn.classList.add('is-open');
+    btn.setAttribute('aria-expanded', 'true');
+  };
+
+  btn.addEventListener('click', e => {
+    e.stopPropagation();
+    menu.hidden ? openMenu() : closeMenu();
+  });
+
+  toggle.addEventListener('click', () => {
+    setClientsEditing(!dash.clientsEditing);
+    closeMenu();
+  });
+
+  // "סיום עריכה" on the banner – the way out without reopening the menu.
+  if (done) done.addEventListener('click', () => setClientsEditing(false));
+
+  // Click-away and Escape close the menu (they never leave edit mode: that is
+  // its own deliberate choice, so an accidental click can't silently re-lock
+  // the table mid-edit).
+  document.addEventListener('click', e => {
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== btn) closeMenu();
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape' && !menu.hidden) { closeMenu(); btn.focus(); }
+  });
 }
 
 async function adminCancel(id) {

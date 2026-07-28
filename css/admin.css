@@ -439,7 +439,105 @@
     url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23fff' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 8.5l3.5 3.5 7.5-8'/%3E%3C/svg%3E");
   border-color: var(--pink-400);
 }
-.fg-toggle input:disabled + .fg-box { opacity: 0.5; }
+/* Dim only a toggle that is mid-save. Outside edit mode every checkbox is
+   disabled by design, and the column must still read as plain information
+   rather than looking greyed out. */
+.clients-table.is-editing .fg-toggle input:disabled + .fg-box { opacity: 0.5; }
+
+/* ── Clients list: edit mode ──
+   Out of edit mode the permission toggle and the remove button are inert, so
+   neither a stray tap on a phone nor a mis-click can grant a treatment or delete
+   somebody. The toggle stays visible (it is information — who has the
+   permission), it just stops responding; the remove column is hidden entirely. */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; border: 0; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+.clients-menu-wrap { position: relative; }
+.clients-menu-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px;
+  font-size: 1.25rem; line-height: 1;
+  color: var(--gray-600);
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), color var(--transition);
+}
+.clients-menu-btn:hover { background: var(--pink-50); border-color: var(--pink-400); color: var(--pink-500); }
+.clients-menu-btn:focus-visible { outline: 2px solid var(--pink-400); outline-offset: 2px; }
+.clients-menu-btn.is-open { background: var(--pink-100); border-color: var(--pink-400); color: var(--pink-500); }
+
+.clients-menu {
+  position: absolute; top: calc(100% + 8px); left: 0; z-index: 30;
+  min-width: 190px; padding: 6px;
+  background: var(--white);
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-md);
+}
+.clients-menu[hidden] { display: none; }
+.clients-menu-item {
+  display: flex; align-items: center; gap: 9px; width: 100%;
+  font-family: var(--font); font-size: 0.88rem; font-weight: 600; text-align: right;
+  color: var(--gray-700);
+  padding: 10px 12px;
+  background: none; border: none; border-radius: var(--radius-sm);
+  cursor: pointer;
+  transition: background var(--transition), color var(--transition);
+}
+.clients-menu-item:hover { background: var(--pink-50); color: var(--pink-500); }
+.cmi-icon { font-size: 1rem; }
+
+.clients-edit-banner {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 0.85rem; font-weight: 600;
+  color: #8a5a00;
+  background: #fff6e0;
+  border: 1px solid #f3dca6;
+  border-radius: var(--radius-md);
+  padding: 10px 14px;
+  margin: -6px 0 16px;
+}
+.clients-edit-banner[hidden] { display: none; }
+.clients-edit-done {
+  font-family: var(--font); font-size: 0.82rem; font-weight: 700;
+  color: #8a5a00;
+  background: var(--white);
+  border: 1px solid #e6c98a;
+  border-radius: var(--radius-xl);
+  padding: 5px 14px;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.clients-edit-done:hover { background: #fdeec9; }
+
+/* Permission toggle: only live while editing. */
+.clients-table:not(.is-editing) .fg-toggle { cursor: default; }
+.clients-table:not(.is-editing) .fg-toggle:hover { background: none; }
+.clients-table:not(.is-editing) .fg-toggle:hover .fg-box { border-color: var(--pink-200); }
+
+/* Remove column: only present while editing. */
+.clients-table .cl-del-th, .clients-table .cl-del { width: 1%; text-align: center; padding: 0; }
+.clients-table:not(.is-editing) .cl-del-th,
+.clients-table:not(.is-editing) .cl-del { display: none; }
+.cl-del-btn {
+  display: flex; align-items: center; justify-content: center;
+  width: 32px; height: 32px; margin: 0 12px;
+  font-size: 0.95rem; line-height: 1;
+  color: #c0392b;
+  background: var(--white);
+  border: 1.5px solid #f1b0b0;
+  border-radius: 50%;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+.cl-del-btn:hover { background: #fdf0f0; border-color: #e08a8a; }
+.cl-del-btn:focus-visible { outline: 2px solid #c0392b; outline-offset: 2px; }
+.cl-del-btn:disabled { opacity: 0.45; cursor: default; }
+
 .clients-loading, .clients-empty {
   text-align: center; color: var(--gray-400); padding: 28px 16px;
 }
@@ -559,9 +657,35 @@
   .aac-actions { justify-content: flex-end; }
   .admin-main { padding: 20px 16px 60px; }
   .admin-section { padding: 18px; }
+  /* The search stretches to fill the row, but the ⋮ button stays on it rather
+     than wrapping to a line of its own. */
+  .clients-tools { width: 100%; flex-wrap: nowrap; }
   .clients-search { min-width: 0; width: 100%; }
+  .clients-tools .clients-search { flex: 1 1 auto; }
+  .clients-tools .clients-menu-wrap { flex: 0 0 auto; }
   .client-stats-grid { gap: 8px; }
   .cstat-num { font-size: 1.35rem; }
+
+  /* The clients table is far wider than a phone, so it scrolls sideways. Pin the
+     name column to the right edge: without it, scrolling left leaves columns of
+     dates and emails with nothing to say whose they are. The header cell pins in
+     both directions at once (it is already sticky to the top). */
+  .clients-table th:first-child,
+  .clients-table .cl-name {
+    position: sticky;
+    right: 0;
+    background: var(--white);
+    /* A soft edge so the pinned column reads as sitting above the scrolled ones. */
+    box-shadow: -6px 0 8px -6px rgba(0, 0, 0, 0.12);
+  }
+  .clients-table .cl-name { z-index: 2; }
+  .clients-table thead th:first-child { z-index: 3; background: var(--gray-50); }
+  /* The open row's tint has to reach the pinned cell too, or it looks detached. */
+  .clients-table tbody tr.client-row.is-active .cl-name { background: var(--pink-50); }
+  /* …but not on top of the active row's own marker on that same edge. */
+  .clients-table tbody tr.client-row.is-active td:first-child {
+    box-shadow: inset 3px 0 0 var(--pink-400), -6px 0 8px -6px rgba(0, 0, 0, 0.12);
+  }
 }
 
 /* ── Mobile optimization layer (touch-first, declared last) ── */
