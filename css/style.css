@@ -964,8 +964,13 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   padding-inline: 18px;
   font-size: 0.98rem;
 }
+/* Stacked on a narrow phone. A grid rather than a column flexbox: equal rows
+   keep both buttons exactly the same height even when one carries an emoji,
+   whose glyph is taller than the Hebrew text and would otherwise stretch its
+   own button on its own. */
 @media (max-width: 560px) {
-  .step-actions { flex-direction: column; }
+  .step-actions { display: grid; grid-auto-rows: 1fr; }
+  .step-actions .btn-next { width: 100%; }
 }
 
 .btn-back {
