@@ -200,7 +200,7 @@
         </div>
         <!-- Shown only while editing, so it is never ambiguous which mode the table is in. -->
         <p class="clients-edit-banner" id="clients-edit-banner" hidden>
-          מצב עריכה פעיל — אפשר לשנות הרשאות ולהסיר לקוחות.
+          מצב עריכה פעיל — אפשר לשנות שמות, לשנות הרשאות ולהסיר לקוחות.
           <button type="button" class="clients-edit-done" id="clients-edit-done">סיום עריכה</button>
         </p>
         <div class="clients-layout">
@@ -254,21 +254,79 @@
   <div class="modal-overlay" id="resched-modal" style="display:none;">
     <div class="modal-card resched-card">
       <button class="modal-close" id="resched-close" aria-label="סגירה">✕</button>
-      <h3 class="modal-title">הזזת תור</h3>
+      <h3 class="modal-title" id="resched-title">הזזת תור</h3>
       <p class="modal-sub" id="resched-sub"></p>
 
       <div class="resched-current" id="resched-current"></div>
 
-      <div class="resched-picker">
+      <div class="resched-picker" id="resched-picker">
+        <!-- Moving an appointment is nearly always an hour's shift on the same
+             day, so the date only opens up when it's asked for. -->
+        <button type="button" class="admin-btn ghost full" id="resched-other-date"
+                style="display:none;">📅 הזזה למועד אחר</button>
         <div class="calendar-box" id="resched-cal-box"><!-- rendered by JS --></div>
         <div class="slots-box" id="resched-slots-box" style="display:none;">
           <h4>שעות פנויות ביום <span id="resched-date-label"></span></h4>
           <div class="slots-grid" id="resched-slots-grid"></div>
+
+          <!-- Any other hour Moriya wants, including outside the working hours
+               or on top of another appointment – she is warned, never blocked. -->
+          <div class="manual-time">
+            <span class="mt-label">או שעה אחרת:</span>
+            <div class="time-select" dir="ltr">
+              <select class="ts-hour" id="resched-h" aria-label="שעה"></select>
+              <span class="ts-colon">:</span>
+              <select class="ts-min5" id="resched-m" aria-label="דקות"></select>
+            </div>
+            <button type="button" class="admin-btn ghost" id="resched-manual">בחרי שעה זו</button>
+          </div>
+          <p class="mt-note" id="resched-manual-note"></p>
         </div>
       </div>
 
       <p class="avail-feedback" id="resched-feedback"></p>
       <button class="admin-btn primary full" id="resched-save" disabled>שמירה ועדכון יומן</button>
+
+      <!-- Shown after a successful move: the one chance to tell the client. -->
+      <div class="resched-done" id="resched-done" style="display:none;">
+        <p class="rd-title">✓ התור הוזז והיומן עודכן</p>
+        <p class="rd-msg" id="resched-done-msg"></p>
+        <button class="admin-btn primary full" id="resched-notify">💬 עדכני את הלקוחה בוואטסאפ</button>
+        <button class="admin-btn ghost full" id="resched-done-close">סגירה</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ──────────────── TIME PICKER MODAL ────────────────
+       Shared by the day view: moving a slot that nobody booked yet, and
+       changing a break's hours. -->
+  <div class="modal-overlay" id="tm-modal" style="display:none;">
+    <div class="modal-card tm-card">
+      <button class="modal-close" id="tm-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title" id="tm-title"></h3>
+      <p class="modal-sub" id="tm-sub"></p>
+
+      <div class="field-row">
+        <label class="field">
+          <span id="tm-start-label">משעה</span>
+          <div class="time-select" dir="ltr">
+            <select class="ts-hour" id="tm-start-h" aria-label="שעת התחלה"></select>
+            <span class="ts-colon">:</span>
+            <select class="ts-min5" id="tm-start-m" aria-label="דקות התחלה"></select>
+          </div>
+        </label>
+        <label class="field" id="tm-end-field">
+          <span id="tm-end-label">עד שעה</span>
+          <div class="time-select" dir="ltr">
+            <select class="ts-hour" id="tm-end-h" aria-label="שעת סיום"></select>
+            <span class="ts-colon">:</span>
+            <select class="ts-min5" id="tm-end-m" aria-label="דקות סיום"></select>
+          </div>
+        </label>
+      </div>
+
+      <p class="avail-feedback" id="tm-feedback"></p>
+      <button class="admin-btn primary full" id="tm-save">שמירה</button>
     </div>
   </div>
 
@@ -278,6 +336,7 @@
   <script src="https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
+  <script src="js/schedule.js"></script>
   <script src="js/admin.js"></script>
 </body>
 </html>

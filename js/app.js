@@ -871,9 +871,10 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 
 // ─── Availability (admin-managed) ─────────────────────────────────────────────
 // Per-day model:
-//   • Fridays are work days by default (09:00–17:00) — no DB row needed.
-//   • The admin can add explicit 'open' windows (any day), 'block' breaks, or a
-//     'closed' marker that turns a default Friday off.
+//   • Fridays are work days by default (09:00–18:00) — no DB row needed.
+//   • The admin can add explicit 'open' windows (any day), 'block' breaks, a
+//     'closed' marker that turns a default Friday off, or rows that replace the
+//     default breaks on a single date ('bigbreak' / 'float' / 'nodefault').
 // Effective open windows for a day:
 //   closed → none · explicit open rows → those · else Friday → default · else none.
 // Each open window is sliced into appointments on a grid that depends on the
@@ -887,13 +888,10 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 //     overrun into it (up to 11:15) but it never moves; no slot starts inside it.
 //   • Small break (15 min): floating — it (and the slots after it) get pushed
 //     later when an appointment is still running past 14:00.
-const DEFAULT_FRIDAY_OPEN = [{ start: 9 * 60, end: 18 * 60 }];             // 09:00–18:00 (last appt ends by 18:00)
-const FRIDAY_BIG_BREAK    = { start: 10 * 60 + 30, end: 11 * 60 + 15 };    // 10:30–11:15 (fixed)
-const FRIDAY_FLOAT_BREAK  = { notBefore: 14 * 60, len: 15 };               // 15-min floating afternoon rest
-const NOMINAL_SLOT        = 90;                                            // grid spacing for empty time
-const padNum   = n => String(n).padStart(2, '0');
-const hhmmToMin = hhmm => { const [h, m] = hhmm.slice(0, 5).split(':').map(Number); return h * 60 + m; };
-const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
+// The rules themselves live in js/schedule.js, shared with the admin dashboard.
+const padNum      = n => String(n).padStart(2, '0');
+const hhmmToMin   = MoriyaSchedule.toMin;
+const isFridayStr = MoriyaSchedule.isFriday;
 
 const availabilityCache = new Map(); // 'YYYY-M' → Map(date → {open,block,closed})
 
@@ -912,13 +910,12 @@ async function getMonthAvailability(year, month /* 0-based */) {
         .from('availability')
         .select('date,start_time,end_time,kind')
         .gte('date', first).lte('date', last);
+      const rowsByDate = new Map();
       (data || []).forEach(r => {
-        const info = byDate.get(r.date) || { open: [], block: [], closed: false };
-        if (r.kind === 'closed') info.closed = true;
-        else if (r.kind === 'block') info.block.push({ start: hhmmToMin(r.start_time), end: hhmmToMin(r.end_time) });
-        else info.open.push({ start: hhmmToMin(r.start_time), end: hhmmToMin(r.end_time) });
-        byDate.set(r.date, info);
+        if (!rowsByDate.has(r.date)) rowsByDate.set(r.date, []);
+        rowsByDate.get(r.date).push(r);
       });
+      rowsByDate.forEach((rows, date) => byDate.set(date, MoriyaSchedule.readRows(rows)));
     }
   } catch (e) { /* network/RLS error → defaults still apply (Fridays) */ }
 
@@ -927,32 +924,14 @@ async function getMonthAvailability(year, month /* 0-based */) {
 }
 
 // The day's effective open windows, applying the Friday default.
-function effectiveOpenWindows(dateStr, info) {
-  if (info && info.closed) return [];
-  if (info && info.open && info.open.length) return info.open;
-  return isFridayStr(dateStr) ? DEFAULT_FRIDAY_OPEN.map(w => ({ ...w })) : [];
-}
+const effectiveOpenWindows = MoriyaSchedule.openWindows;
 
-// A Friday runs on the default schedule (and so carries the default break) when
-// it isn't closed and the admin hasn't set explicit open windows for it.
-function usesDefaultFriday(dateStr, info) {
-  if (info && info.closed) return false;
-  if (info && info.open && info.open.length) return false;
-  return isFridayStr(dateStr);
-}
-
+// The day as the shared model sees it: its windows and its breaks, ready to be
+// sliced into slots.
 async function getDayWindows(dateStr) {
   const [y, m] = dateStr.split('-').map(Number);
   const byDate = await getMonthAvailability(y, m - 1);
-  const info   = byDate.get(dateStr) || { open: [], block: [], closed: false };
-  // Admin-defined breaks are hard blocks; the fixed big break applies only when
-  // the day runs on the default Friday schedule (the floating break is derived
-  // from the day's bookings at slot-generation time).
-  return {
-    open:        effectiveOpenWindows(dateStr, info),
-    adminBlocks: [...(info.block || [])],
-    bigBreak:    usesDefaultFriday(dateStr, info) ? { ...FRIDAY_BIG_BREAK } : null,
-  };
+  return byDate.get(dateStr) || {};
 }
 
 // Busy intervals for a day, cached so the calendar can check every open day
@@ -1165,86 +1144,16 @@ async function loadTimeSlots(dateStr) {
 // lands on the actual end of the previous booking (or a break boundary), so the
 // schedule "bites" exactly the requested duration and shows real next-free times.
 
-// Merge overlapping intervals into a sorted, disjoint list.
-function mergeIntervals(list) {
-  const sorted = (list || []).filter(x => x && x.end > x.start).sort((a, b) => a.start - b.start);
-  const out = [];
-  for (const iv of sorted) {
-    const last = out[out.length - 1];
-    if (last && iv.start <= last.end) last.end = Math.max(last.end, iv.end);
-    else out.push({ start: iv.start, end: iv.end });
-  }
-  return out;
-}
-
-// Build the day's open slot anchors on the fixed 90-min grid. Empty time advances
-// by the nominal slot length (keeping the grid stable and duration-independent);
-// booked time advances by the booking's real length, which pushes the break and
-// every later anchor forward by the overflow. Booked anchors are skipped.
-function buildDayAnchors(ws, we, bigBreak, floatBreak, bookings) {
-  const bks = mergeIntervals(bookings);
-  const anchors = [];
-  let cursor = ws, smallUsed = false, guard = 0;
-  while (cursor < we && guard++ < 300) {
-    // Floating small break: inserted once, before the first anchor at/after notBefore.
-    if (floatBreak && !smallUsed && cursor >= floatBreak.notBefore) {
-      smallUsed = true; cursor += floatBreak.len; continue;
-    }
-    // Big break: fixed — never sit an anchor inside it.
-    if (bigBreak && cursor >= bigBreak.start && cursor < bigBreak.end) {
-      cursor = bigBreak.end; continue;
-    }
-    // A booking covering the cursor → advance past it by its real length.
-    const cover = bks.find(b => b.start <= cursor && cursor < b.end);
-    if (cover) { cursor = cover.end; continue; }
-    // Open anchor.
-    anchors.push(cursor);
-    let next = cursor + NOMINAL_SLOT;
-    const nextBk = bks.find(b => b.start > cursor && b.start < next);   // a booking starts within this slot
-    if (nextBk) next = nextBk.start;
-    if (bigBreak && cursor < bigBreak.start && next > bigBreak.start) next = bigBreak.start;
-    cursor = next;
-  }
-  return anchors;
-}
-
-// All bookable start minutes for `duration` on a day, given its bookings and windows.
-function computeAvailableStarts(duration, busy, dayWindows, dateStr) {
-  const now      = new Date();
-  const todayStr = `${now.getFullYear()}-${padNum(now.getMonth() + 1)}-${padNum(now.getDate())}`;
-  const isToday  = dateStr === todayStr;
-  const nowMin   = now.getHours() * 60 + now.getMinutes();
-
-  const wins       = dayWindows || { open: [], adminBlocks: [], bigBreak: null };
-  const bigBreak   = wins.bigBreak;
-  // The floating afternoon break is part of the default Friday schedule, so it
-  // applies only when the fixed big break does (not on admin-customised days).
-  const floatBreak = bigBreak ? FRIDAY_FLOAT_BREAK : null;
-  // Admin blocks + calendar busy + the client's own appointments are all hard
-  // bookings (merged/deduped) that block overlap and push the grid.
-  const bookings   = mergeIntervals([...(wins.adminBlocks || []), ...(busy || [])]);
-
-  const out = [];
-  (wins.open || []).forEach(w => {
-    buildDayAnchors(w.start, w.end, bigBreak, floatBreak, bookings).forEach(a => {
-      const end = a + duration;
-      if (end > w.end) return;                                        // last appointment ends by the window end (18:00)
-      if (bigBreak && a < bigBreak.start && end > bigBreak.end) return; // may eat the big break but not cross 11:15
-      if (bookings.some(b => a < b.end && end > b.start)) return;      // no overlap with a booking
-      out.push(a);
-    });
-  });
-  return [...new Set(out)].sort((a, b) => a - b)
-    .filter(m => !(isToday && m <= nowMin));
-}
-
 // Thin wrapper keeping the {label, busy} shape the callers expect. Every returned
-// slot is bookable (occupied times are simply never generated).
-function buildAvailableSlots(durationMin, busySlots, dateStr, dayWindows) {
-  return computeAvailableStarts(durationMin, busySlots, dayWindows, dateStr).map(m => ({
-    label: `${padNum(Math.floor(m / 60))}:${padNum(m % 60)}`,
-    busy: false,
-  }));
+// slot is bookable (occupied times are simply never generated). Slots that have
+// already passed are dropped when the day being shown is today.
+function buildAvailableSlots(durationMin, busySlots, dateStr, day) {
+  const now       = new Date();
+  const todayStr  = `${now.getFullYear()}-${padNum(now.getMonth() + 1)}-${padNum(now.getDate())}`;
+  const notBefore = dateStr === todayStr ? now.getHours() * 60 + now.getMinutes() : undefined;
+
+  return MoriyaSchedule.availableStarts(durationMin, dateStr, day, busySlots, notBefore)
+    .map(m => ({ label: MoriyaSchedule.fromMin(m), busy: false }));
 }
 
 // Show/hide the "you already have an appointment today" note above the slots.
@@ -1326,7 +1235,7 @@ async function findNearestSlot() {
     const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
     const wins    = await getDayWindows(dateStr);
     // Bookable when the day has effective open windows (Fridays by default).
-    const bookable = wins.open.length > 0;
+    const bookable = effectiveOpenWindows(dateStr, wins).length > 0;
     if (bookable) {
       const busy = (await getBusySlots(dateStr)).concat(ownByDate.get(dateStr) || []);
       const free = buildAvailableSlots(state.totalTime, busy, dateStr, wins).find(s => !s.busy);
@@ -1412,8 +1321,9 @@ function renderOrderSummary() {
   `;
 }
 
-// Prefill name & phone from the signed-in client. The name starts as the one she
-// last booked with and falls back to her Google name on a first booking —
+// Prefill name & phone from the signed-in client. The name starts as the one on
+// her profile — whichever she last booked with, or the one Moriya set for her in
+// the dashboard — and falls back to her Google name only on a first booking;
 // displayName() already resolves that order. She can edit it freely, and
 // whatever she submits is written back to her profile for next time.
 function prefillUserDetails() {
