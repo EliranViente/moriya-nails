@@ -254,12 +254,16 @@
   <div class="modal-overlay" id="resched-modal" style="display:none;">
     <div class="modal-card resched-card">
       <button class="modal-close" id="resched-close" aria-label="סגירה">✕</button>
-      <h3 class="modal-title">הזזת תור</h3>
+      <h3 class="modal-title" id="resched-title">הזזת תור</h3>
       <p class="modal-sub" id="resched-sub"></p>
 
       <div class="resched-current" id="resched-current"></div>
 
       <div class="resched-picker" id="resched-picker">
+        <!-- Moving an appointment is nearly always an hour's shift on the same
+             day, so the date only opens up when it's asked for. -->
+        <button type="button" class="admin-btn ghost full" id="resched-other-date"
+                style="display:none;">📅 הזזה למועד אחר</button>
         <div class="calendar-box" id="resched-cal-box"><!-- rendered by JS --></div>
         <div class="slots-box" id="resched-slots-box" style="display:none;">
           <h4>שעות פנויות ביום <span id="resched-date-label"></span></h4>

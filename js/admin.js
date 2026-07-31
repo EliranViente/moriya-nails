@@ -961,7 +961,7 @@ function wireDayActions(list, date) {
     const d = b.dataset;
     switch (d.act) {
       case 'appt-cancel': return adminCancel(d.id);
-      case 'appt-move':   return openReschedule(d.id);
+      case 'appt-move':   return openReschedule(d.id, true);
       case 'appt-notify': return sendMoveNotice(d.id);
       case 'free-block':  return cancelFreeSlot(date, Number(d.start), Number(d.end));
       case 'free-move':   return moveFreeSlot(date, Number(d.start), Number(d.end), Number(d.winEnd));
@@ -1743,7 +1743,10 @@ let reschedFree = new Set();   // free start times ("HH:MM") on the shown day
 let reschedCalYear = new Date().getFullYear();
 let reschedCalMonth = new Date().getMonth();
 
-function openReschedule(id) {
+// `sameDay` opens the modal on the hour alone — the day view's default, since a
+// move there is almost always a shift within the day being looked at. The date
+// is one button away.
+function openReschedule(id, sameDay) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
   if (!appt || appt.status === 'cancelled' || isPastAppt(appt)) return;
   reschedTarget  = appt;
@@ -1768,8 +1771,18 @@ function openReschedule(id) {
   document.getElementById('resched-current').style.display = '';
   document.getElementById('resched-save').style.display = '';
 
+  showReschedDate(!sameDay);
+  document.getElementById('resched-title').textContent =
+    sameDay ? 'הזזת שעה' : 'הזזת תור';
+
   renderReschedCalendar().then(() => loadReschedSlots(reschedSelDate));
   document.getElementById('resched-modal').style.display = 'flex';
+}
+
+// Show the calendar, or fold it away behind the "another date" button.
+function showReschedDate(open) {
+  document.getElementById('resched-cal-box').style.display   = open ? '' : 'none';
+  document.getElementById('resched-other-date').style.display = open ? 'none' : '';
 }
 
 async function renderReschedCalendar() {
@@ -2017,6 +2030,10 @@ function wireControls() {
   });
   document.getElementById('resched-save').addEventListener('click', saveReschedule);
   document.getElementById('resched-manual').addEventListener('click', pickManualReschedTime);
+  document.getElementById('resched-other-date').addEventListener('click', () => {
+    showReschedDate(true);
+    document.getElementById('resched-title').textContent = 'הזזת תור';
+  });
 
   document.getElementById('tm-close').addEventListener('click', closeTimeModal);
   document.getElementById('tm-modal').addEventListener('click', e => {
