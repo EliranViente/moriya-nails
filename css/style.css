@@ -827,8 +827,9 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   padding-right: 36px;
 }
 
-/* Decoration note (price set in person) */
-.deco-note-box {
+/* Note box – a short remark under an add-on or inside the option picker.
+   Gold by default (something priced in person); .pink for a plain heads-up. */
+.note-box {
   display: flex;
   align-items: flex-start;
   gap: 10px;
@@ -838,13 +839,112 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   border: 1px solid var(--gold);
   border-radius: var(--radius-sm);
 }
-.deco-note-icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
-.deco-note-box p {
+.note-icon { font-size: 1.1rem; line-height: 1.4; flex-shrink: 0; }
+.note-box p {
   font-size: 0.85rem;
   color: var(--gold-dark);
   line-height: 1.5;
   font-weight: 500;
 }
+.note-box.pink {
+  background: var(--pink-50);
+  border-color: var(--pink-200);
+}
+.note-box.pink p { color: var(--pink-500); }
+
+/* Add-on option picker – the row that opens it, and what it fills back in */
+.picker-chosen {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 12px;
+  padding-right: 36px;
+}
+.picker-chosen-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.picker-chosen-list li {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--pink-500);
+  background: var(--pink-50);
+  border: 1px solid var(--pink-100);
+  border-radius: 999px;
+  padding: 3px 10px;
+}
+.picker-edit {
+  font-family: inherit;
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--gray-600);
+  background: none;
+  border: none;
+  border-bottom: 1px solid var(--pink-200);
+  padding: 0 0 1px;
+  cursor: pointer;
+  transition: color var(--transition);
+}
+.picker-edit:hover { color: var(--pink-500); }
+
+/* The picker modal itself. Only the option list scrolls, so the running total
+   above it and the "add to appointment" button below it are always in view. */
+.modal-card.picker-card {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;   /* beats .modal-card's own overflow-y further down */
+}
+.modal-card.picker-card > *:not(.picker-list) { flex-shrink: 0; }
+.picker-total {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 4px 12px;
+  margin-bottom: 16px;
+  padding: 14px 16px;
+  background: linear-gradient(135deg, var(--pink-50), var(--white));
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-sm);
+}
+.picker-total-label { font-size: 0.85rem; font-weight: 600; color: var(--gray-600); }
+.picker-total-vals  { font-size: 1rem; color: var(--pink-500); }
+.picker-total-extra {
+  flex-basis: 100%;
+  font-size: 0.78rem;
+  font-weight: 500;
+  color: var(--gold-dark);
+}
+.picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  padding: 2px;   /* room for the focus/hover border of the first and last row */
+}
+.picker-option {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  cursor: pointer;
+  background: var(--gray-50);
+  border: 1px solid var(--pink-100);
+  border-radius: var(--radius-md);
+  padding: 14px 16px;
+  transition: border-color var(--transition), background var(--transition);
+}
+.picker-option:hover { border-color: var(--pink-200); }
+.picker-option.checked {
+  background: var(--pink-50);
+  border-color: var(--pink-300);
+}
+.picker-option input[type="checkbox"] { display: none; }
+.picker-notes:empty { display: none; }
+#picker-confirm { margin-top: 20px; }
 .summary-deco-note {
   width: 100%;
   margin-top: 4px;

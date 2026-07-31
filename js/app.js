@@ -32,16 +32,129 @@ const state = {
 // instead of creating a new one.
 let editingAppointment = null;
 
+// ─── Add-on option pickers ───────────────────────────────────────────────────
+// An add-on whose sub-options the client chooses on a screen of their own: she
+// ticks the add-on, a modal opens with everything on offer, she picks as many as
+// she likes, watches the time and price they add at the top, and confirms with
+// "הוסיפי לתור". Each chosen option then joins the appointment as a service of
+// its own ("קישוט – ציורי גלים"), so Moriya's calendar, the confirmation card and
+// the reschedule panel all list exactly what was picked.
+//
+// The whole mechanism is driven by this config: another add-on that works this
+// way needs an entry here and an .addon-row[data-type="picker"] row pointing at
+// it by key – no new markup or handlers of its own.
+//
+// An option carrying `priceLabel` is priced in person instead of on the site: its
+// price counts as 0 in the total, and the range shows wherever the total does.
+// `note` is shown while that option is picked; the picker's own `note` covers
+// every option that doesn't bring one.
+const ADDON_PICKERS = {
+  deco: {
+    prefix:     'קישוט',
+    title:      'בחרי את הקישוטים',
+    subtitle:   'ניתן לבחור יותר מקישוט אחד · הזמן והמחיר יתווספו לתור',
+    editLabel:  'שינוי הקישוטים',
+    emptyTime:  "10–15 דק'",
+    emptyPrice: '5–40 ₪',
+    note: {
+      emoji: '💗',
+      tone:  'pink',
+      text:  'הקישוט מתומחר כאחד לכל ציפורן, במידה ותרצי יותר מאחד על כל ציפורן תיתכנה עלויות נוספות במועד התור'
+    },
+    options: [
+      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',      desc: "אפקט פרנץ' קלאסי ואלגנטי",     time: 15, price: 20 },
+      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה עדין',          desc: 'מעבר אומברה מדורג ורך',         time: 15, price: 20 },
+      { id: 'waves',  emoji: '🌊', name: 'ציורי גלים',                desc: 'קווי גלים מצוירים ביד',         time: 15, price: 15 },
+      { id: 'pearl',  emoji: '🧚', name: 'אבקת פנינה',                desc: 'ברק פנינה עדין על הציפורן',     time: 15, price: 15 },
+      { id: 'stones', emoji: '💎', name: 'אבנים דמוי יהלום מודבקות',  desc: 'אבני חן מודבקות לנצנוץ',        time: 10, price: 10 },
+      { id: 'custom', emoji: '🎨', name: 'עיצוב אישי',                desc: 'עיצוב משלך – המחיר ייקבע בתור', time: 15, price: 0,
+        priceLabel: '5–40 ₪ (ייקבע בתור)', priceShort: '5–40 ₪',
+        note: { emoji: '💡', text: 'המחיר המדויק של הקישוט ייקבע בתור עצמו בהתאם לעיצוב שתבחרי' } },
+    ],
+  },
+};
+
+// What the client has chosen in each picker, by picker key → option ids.
+const pickerChoice = {};
+Object.keys(ADDON_PICKERS).forEach(key => { pickerChoice[key] = []; });
+
+// The name a chosen option carries as a service, e.g. "קישוט – ציורי גלים".
+function pickerServiceName(cfg, opt) {
+  return cfg.prefix ? `${cfg.prefix} – ${opt.name}` : opt.name;
+}
+
+// The options currently chosen in a picker, in the order they are offered.
+function pickerChosenOptions(key) {
+  const cfg = ADDON_PICKERS[key];
+  if (!cfg) return [];
+  const ids = pickerChoice[key] || [];
+  return cfg.options.filter(o => ids.includes(o.id));
+}
+
+// Those same options as services, in the {name,time,price} shape every other
+// treatment uses, ready to join state.addons.
+function pickerServices(key) {
+  const cfg = ADDON_PICKERS[key];
+  if (!cfg) return [];
+  return pickerChosenOptions(key).map(o => {
+    const s = { name: pickerServiceName(cfg, o), time: o.time, price: o.price };
+    if (o.priceLabel) s.priceLabel = o.priceLabel;
+    return s;
+  });
+}
+
+// The notes that apply to a set of chosen options: an option's own note when it
+// brings one, plus the picker's shared note as soon as anything without one is
+// picked.
+function pickerNotes(cfg, opts) {
+  const notes = opts.filter(o => o.note).map(o => o.note);
+  if (cfg.note && opts.some(o => !o.note)) notes.unshift(cfg.note);
+  return notes;
+}
+
+// What a set of chosen options adds to the price, as text: the fixed part, and a
+// range of its own for anything priced in person ("+15 ₪ +5–40 ₪").
+function pickerPriceText(opts) {
+  const ranges = opts.filter(o => o.priceShort).map(o => `+${o.priceShort}`);
+  const fixed  = opts.reduce((s, o) => s + o.price, 0);
+  const parts  = (fixed > 0 || !ranges.length) ? [`+${fixed} ₪`] : [];
+  return parts.concat(ranges).join(' ');
+}
+
+function noteBoxesHtml(notes) {
+  return notes.map(n => `
+    <div class="note-box${n.tone ? ' ' + n.tone : ''}">
+      <span class="note-icon">${n.emoji}</span>
+      <p>${n.text}</p>
+    </div>`).join('');
+}
+
 // Add-ons a client may add to / remove from an existing appointment while
 // rescheduling. Only the base treatment (gel polish / anatomic structure) stays
 // locked – every add-on is editable, and the changes sync to Moriya's calendar
 // on update. The `name` fields match the booking flow exactly so add-ons already
 // on the appointment map back onto these controls (pre-filled and removable).
 // `time`/`price` are per-unit; quantity rows multiply by the chosen count.
+//
+// A picker's options each get a checkbox of their own here, built from the very
+// same config the booking modal uses, so a decoration already on the appointment
+// maps back onto its own control instead of being locked away.
+function pickerRescheduleExtras(key) {
+  const cfg = ADDON_PICKERS[key];
+  if (!cfg) return [];
+  return cfg.options.map(o => {
+    const x = {
+      id: `${key}-${o.id}`, emoji: o.emoji, name: pickerServiceName(cfg, o),
+      desc: o.desc || '', type: 'checkbox', time: o.time, price: o.price
+    };
+    if (o.priceLabel) x.priceLabel = o.priceLabel;
+    return x;
+  });
+}
+
 const RESCHEDULE_EXTRAS = [
   { id: 'double',  emoji: '💎', name: 'שתי שכבות בייס / אבקת אקריל',              desc: 'חיזוק נוסף לציפורניים',                        type: 'checkbox', time: 15, price: 20 },
-  { id: 'french',  emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי / מעבר אומברה עדין', desc: 'פרנץ׳ קלאסי או מעבר אומברה עדין',              type: 'checkbox', time: 15, price: 20 },
-  { id: 'deco',    emoji: '🎨', name: 'קישוט',                                   desc: 'המחיר (5–40 ₪) ייקבע בתור לפי העיצוב',         type: 'checkbox', time: 10, price: 0, priceLabel: '5–40 ₪ (ייקבע בתור)' },
+  ...pickerRescheduleExtras('deco'),
   { id: 'polygel', emoji: '🔧', name: "השלמת ציפורן בטיפס ג'ל",                  desc: 'השלמת ציפורן שנשברה · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
   { id: 'crack',   emoji: '🩹', name: 'תיקון סדק בציפורן',                       desc: 'תיקון מהיר לסדק · 5 ₪ ו-5 דק׳ לציפורן',       type: 'quantity', time: 5,  price: 5  },
   { id: 'pincer',  emoji: '📐', name: 'תיקון מבנה נשרי לציפורן',                 desc: 'החזרת מבנה ישר לציפורן · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
@@ -266,6 +379,8 @@ function recalculate() {
     if (!baseChecked) {
       const cb = row.querySelector('input[type="checkbox"]');
       if (cb && cb.checked) cb.checked = false;
+      // A picker add-on lives in what was chosen inside it, not in its tick.
+      if (row.dataset.type === 'picker') pickerChoice[row.dataset.picker] = [];
     }
   });
 
@@ -273,7 +388,7 @@ function recalculate() {
   // "Another treatment" = the base manicure, any other checked add-on, or any
   // quantity add-on with a count above zero.
   let hasOtherTreatment = baseChecked || feetPicked.length > 0;
-  document.querySelectorAll('#step-1 .addon-row[data-type="checkbox"]').forEach(row => {
+  document.querySelectorAll('#step-1 .addon-row[data-type="checkbox"], #step-1 .addon-row[data-type="picker"]').forEach(row => {
     if (row.classList.contains('toolkit-row')) return;
     const cb = row.querySelector('input[type="checkbox"]');
     if (cb && cb.checked) hasOtherTreatment = true;
@@ -295,8 +410,51 @@ function recalculate() {
   let totalPrice = baseChecked ? state.basePrice : 0;
   const addons   = [];
 
-  // Checkbox add-ons
-  document.querySelectorAll('#step-1 .addon-row[data-type="checkbox"]').forEach(row => {
+  // Every add-on in the order it is offered, so the summary, the confirmation
+  // card and Moriya's calendar all read the way the page does.
+  document.querySelectorAll('#step-1 .addon-list .addon-row').forEach(row => {
+    // Quantity add-ons – time and price per nail, times the chosen count.
+    if (row.dataset.type === 'quantity') {
+      const qtyInput = row.querySelector('.qty-input');
+      if (!qtyInput) return;
+      const qty      = Math.max(0, parseInt(qtyInput.value) || 0);
+      const tPerUnit = parseInt(row.dataset.timePerUnit  || 0);
+      const pPerUnit = parseInt(row.dataset.pricePerUnit || 0);
+      const name     = row.querySelector('.a-name')?.textContent.trim() || '';
+      const t = qty * tPerUnit;
+      const p = qty * pPerUnit;
+      totalTime  += t;
+      totalPrice += p;
+
+      // Update per-row display
+      const timeEl  = row.querySelector('.qty-time');
+      const priceEl = row.querySelector('.qty-price');
+      if (timeEl)  timeEl.textContent  = '+' + t + ' דק\'';
+      if (priceEl) priceEl.textContent = '+' + p + ' ₪';
+
+      if (qty > 0) addons.push({ name: `${name} (×${qty})`, time: t, price: p });
+      return;
+    }
+
+    // Picker add-ons – each option chosen in the modal joins as a service of its
+    // own, and the tick simply reflects whether anything was chosen at all.
+    if (row.dataset.type === 'picker') {
+      const chosen = pickerServices(row.dataset.picker);
+      const cb = row.querySelector('input[type="checkbox"]');
+      if (cb) cb.checked = chosen.length > 0;
+      row.classList.toggle('checked', chosen.length > 0);
+      // An option priced in person carries price 0, so the running total stays
+      // honest and the note below says what is missing from it.
+      chosen.forEach(s => {
+        totalTime  += s.time;
+        totalPrice += s.price;
+        addons.push(s);
+      });
+      renderPickerRow(row);
+      return;
+    }
+
+    // Plain checkbox add-ons
     const checkbox = row.querySelector('input[type="checkbox"]');
     if (!checkbox) return;
     if (checkbox.checked) {
@@ -312,42 +470,10 @@ function recalculate() {
     }
   });
 
-  // Decoration (special – price decided at the appointment, 5–40 ₪)
-  // Time (+10 min) is counted by the checkbox loop above (data-time="10").
-  // The price is NOT added to the numeric total – it is set in person by the design.
-  const decoCheck   = document.getElementById('chk-deco');
-  const decoNoteBox = document.getElementById('deco-note-box');
-  const decoSummaryNote = document.getElementById('summary-deco-note');
-  const decoSelected = !!(decoCheck && decoCheck.checked);
-  if (decoNoteBox)     decoNoteBox.style.display     = decoSelected ? 'flex'  : 'none';
-  if (decoSummaryNote) decoSummaryNote.style.display = decoSelected ? 'block' : 'none';
-  if (decoSelected) {
-    // Mark the decoration add-on with a range label instead of a fixed price.
-    const idx = addons.findIndex(a => a.name.includes('קישוט'));
-    if (idx !== -1) addons[idx].priceLabel = '5–40 ₪ (ייקבע בתור)';
-  }
-
-  // Quantity add-ons
-  document.querySelectorAll('#step-1 .addon-row[data-type="quantity"]').forEach(row => {
-    const qtyInput = row.querySelector('.qty-input');
-    if (!qtyInput) return;
-    const qty      = Math.max(0, parseInt(qtyInput.value) || 0);
-    const tPerUnit = parseInt(row.dataset.timePerUnit  || 0);
-    const pPerUnit = parseInt(row.dataset.pricePerUnit || 0);
-    const name     = row.querySelector('.a-name')?.textContent.trim() || '';
-    const t = qty * tPerUnit;
-    const p = qty * pPerUnit;
-    totalTime  += t;
-    totalPrice += p;
-
-    // Update per-row display
-    const timeEl  = row.querySelector('.qty-time');
-    const priceEl = row.querySelector('.qty-price');
-    if (timeEl)  timeEl.textContent  = '+' + t + ' דק\'';
-    if (priceEl) priceEl.textContent = '+' + p + ' ₪';
-
-    if (qty > 0) addons.push({ name: `${name} (×${qty})`, time: t, price: p });
-  });
+  // A service priced in person keeps the running total honest: its price is left
+  // out of the sum, and this note says so.
+  const rangeNote = document.getElementById('summary-deco-note');
+  if (rangeNote) rangeNote.style.display = addons.some(a => a.priceLabel) ? 'block' : 'none';
 
   // Feet treatments last, so they read as the extra appointment they are – on the
   // summary, on the confirmation card and in Moriya's calendar event.
@@ -421,9 +547,9 @@ function updateBookingSummary() {
       : "מניקור לק ג'ל";
     const newDuration = rescheduleBase.time  + extrasTotalTime();
     const newPrice    = rescheduleBase.price + extrasTotalPrice();
-    const hasDeco     = rescheduleExtras.some(e => e.priceLabel);
+    const hasInPersonPrice = rescheduleExtras.some(e => e.priceLabel);
     duration = formatDuration(newDuration);
-    price    = newPrice + ' ₪' + (hasDeco ? ' + קישוט' : '');
+    price    = newPrice + ' ₪' + (hasInPersonPrice ? ' + עיצוב אישי' : '');
   } else {
     if (!state.totalTime) { bar.style.display = 'none'; return; }
     // On step 1 stay hidden until the client adds something beyond the default
@@ -433,8 +559,8 @@ function updateBookingSummary() {
 
     treatments = summaryTreatmentsLabel() || '—';
     duration   = formatDuration(state.totalTime);
-    const hasDeco = state.addons.some(a => a.priceLabel);
-    price = state.totalPrice + ' ₪' + (hasDeco ? ' + קישוט' : '');
+    const hasInPersonPrice = state.addons.some(a => a.priceLabel);
+    price = state.totalPrice + ' ₪' + (hasInPersonPrice ? ' + עיצוב אישי' : '');
   }
 
   bar.style.display = 'flex';
@@ -453,8 +579,10 @@ function updateBookingSummary() {
   }
 }
 
-// Attach listeners
+// Attach listeners. A picker add-on's tick opens its modal instead of counting
+// on its own, so it is wired separately below.
 document.querySelectorAll('.addon-check').forEach(cb => {
+  if (cb.closest('.addon-row[data-type="picker"]')) return;
   cb.addEventListener('change', recalculate);
 });
 // Base treatments are mutually exclusive – selecting one clears the other.
@@ -509,7 +637,129 @@ document.querySelectorAll('.qty-btn').forEach(btn => {
     recalculate();
   });
 });
-document.getElementById('chk-deco')?.addEventListener('change', recalculate);
+// ─── The add-on option picker modal ──────────────────────────────────────────
+// Ticking a picker add-on opens it; unticking clears what was chosen inside.
+// While the modal is open the client edits a draft, so closing it without
+// confirming leaves the appointment exactly as it was.
+let activePicker = null;   // key of the picker currently open
+let pickerDraft  = [];     // option ids ticked inside it
+
+function openPicker(key) {
+  const cfg = ADDON_PICKERS[key];
+  if (!cfg) return;
+  activePicker = key;
+  pickerDraft  = [...(pickerChoice[key] || [])];
+
+  document.getElementById('picker-title').textContent = cfg.title;
+  document.getElementById('picker-sub').textContent   = cfg.subtitle || '';
+  document.getElementById('picker-list').innerHTML = cfg.options.map(o => `
+    <label class="picker-option${pickerDraft.includes(o.id) ? ' checked' : ''}">
+      <input type="checkbox" class="picker-check" data-id="${o.id}" ${pickerDraft.includes(o.id) ? 'checked' : ''} />
+      <div class="custom-check"></div>
+      <span class="a-emoji">${o.emoji}</span>
+      <div class="addon-detail">
+        <span class="a-name">${o.name}</span>
+        ${o.desc ? `<span class="a-desc">${o.desc}</span>` : ''}
+      </div>
+      <div class="addon-nums">
+        <span class="a-time">+${o.time} דק'</span>
+        <span class="a-price">${o.priceLabel || `+${o.price} ₪`}</span>
+      </div>
+    </label>`).join('');
+
+  document.getElementById('picker-list').querySelectorAll('.picker-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      const id = cb.dataset.id;
+      pickerDraft = cb.checked
+        ? [...pickerDraft, id]
+        : pickerDraft.filter(x => x !== id);
+      cb.closest('.picker-option')?.classList.toggle('checked', cb.checked);
+      renderPickerDraft();
+    });
+  });
+
+  renderPickerDraft();
+  document.getElementById('picker-modal').style.display = 'flex';
+}
+
+// The running total and notes at the top of the open modal, so the client sees
+// what her picks add before she confirms them.
+function renderPickerDraft() {
+  const cfg = ADDON_PICKERS[activePicker];
+  if (!cfg) return;
+  const picked   = cfg.options.filter(o => pickerDraft.includes(o.id));
+  const time     = picked.reduce((s, o) => s + o.time, 0);
+  const inPerson = picked.filter(o => o.priceLabel).map(o => o.name);
+
+  document.getElementById('picker-total').innerHTML = `
+    <span class="picker-total-label">מתווסף לתור</span>
+    <span class="picker-total-vals"><strong>+${time} דק'</strong> · <strong>${pickerPriceText(picked)}</strong></span>
+    ${inPerson.length ? `<span class="picker-total-extra">מלבד ${inPerson.join(', ')} – מחירם ייקבע בתור</span>` : ''}`;
+
+  document.getElementById('picker-notes').innerHTML = noteBoxesHtml(pickerNotes(cfg, picked));
+  document.getElementById('picker-confirm').disabled = picked.length === 0;
+}
+
+// Close without keeping the draft. recalculate() then unticks the add-on unless
+// something was chosen for it on an earlier visit.
+function closePicker() {
+  activePicker = null;
+  pickerDraft  = [];
+  document.getElementById('picker-modal').style.display = 'none';
+  recalculate();
+}
+
+document.getElementById('picker-confirm')?.addEventListener('click', () => {
+  if (!activePicker || !pickerDraft.length) return;
+  pickerChoice[activePicker] = [...pickerDraft];
+  closePicker();
+});
+document.getElementById('picker-close')?.addEventListener('click', closePicker);
+document.getElementById('picker-modal')?.addEventListener('click', e => {
+  if (e.target.id === 'picker-modal') closePicker();
+});
+
+// What a picker add-on's own row shows once the modal is closed: its numbers,
+// the styles chosen inside it, and the notes that go with them.
+function renderPickerRow(row) {
+  const key = row.dataset.picker;
+  const cfg = ADDON_PICKERS[key];
+  if (!cfg) return;
+  const chosen = pickerChosenOptions(key);
+  const time   = chosen.reduce((s, o) => s + o.time, 0);
+
+  const timeEl  = row.querySelector('.a-time');
+  const priceEl = row.querySelector('.a-price');
+  if (timeEl)  timeEl.textContent  = chosen.length ? `+${time} דק'`        : cfg.emptyTime;
+  if (priceEl) priceEl.textContent = chosen.length ? pickerPriceText(chosen) : cfg.emptyPrice;
+
+  const box = row.querySelector('.picker-chosen');
+  if (box) {
+    box.style.display = chosen.length ? 'flex' : 'none';
+    const list = box.querySelector('.picker-chosen-list');
+    if (list) list.innerHTML = chosen.map(o => `<li>${o.emoji} ${o.name}</li>`).join('');
+    const edit = box.querySelector('.picker-edit');
+    if (edit && cfg.editLabel) edit.textContent = cfg.editLabel;
+  }
+
+  const notes = row.querySelector('.picker-row-notes');
+  if (notes) notes.innerHTML = chosen.length ? noteBoxesHtml(pickerNotes(cfg, chosen)) : '';
+}
+
+document.querySelectorAll('.addon-row[data-type="picker"]').forEach(row => {
+  const key = row.dataset.picker;
+  const cb  = row.querySelector('input[type="checkbox"]');
+  cb?.addEventListener('change', () => {
+    if (cb.checked) { openPicker(key); return; }
+    pickerChoice[key] = [];
+    recalculate();
+  });
+  // The chosen list carries its own way back into the modal.
+  row.querySelector('.picker-edit')?.addEventListener('click', e => {
+    e.preventDefault();
+    openPicker(key);
+  });
+});
 
 recalculate(); // initial
 
@@ -1072,9 +1322,9 @@ function renderOrderSummary() {
     return `<div class="summary-item"><span>${a.name}</span><span>${priceText}</span></div>`;
   }).join('');
 
-  const hasDeco = state.addons.some(a => a.priceLabel);
-  const decoNote = hasDeco
-    ? `<p class="summary-deco-note">✦ מחיר הקישוט (5–40 ₪) ייקבע בתור לפי העיצוב ואינו כלול בסכום למעלה</p>`
+  const hasInPersonPrice = state.addons.some(a => a.priceLabel);
+  const decoNote = hasInPersonPrice
+    ? `<p class="summary-deco-note">✦ מחיר העיצוב האישי (5–40 ₪) ייקבע בתור לפי העיצוב ואינו כלול בסכום למעלה</p>`
     : '';
 
   const baseRow = state.baseIncluded
@@ -1354,14 +1604,14 @@ function showSuccess(name, phone, notes) {
   ];
   if (!treatments.length) treatments.push("מניקור לק ג'ל");
 
-  const hasDeco = state.addons.some(a => a.priceLabel);
+  const hasInPersonPrice = state.addons.some(a => a.priceLabel);
   renderSuccessCard({
     heading:    'התור נקבע בהצלחה!',
     subtitle:   'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
     treatments,
     duration:       formatDuration(state.totalTime),
     durationMinutes: state.totalTime,
-    price:      `${state.totalPrice} ₪${hasDeco ? ' + קישוט (ייקבע בתור)' : ''}`
+    price:      `${state.totalPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי (ייקבע בתור)' : ''}`
   });
 }
 
@@ -1765,11 +2015,11 @@ function recalcRescheduleExtras() {
   const sum = document.getElementById('rx-summary');
   if (sum) {
     const newPrice = rescheduleBase.price + extrasTotalPrice();
-    const hasDeco  = extras.some(e => e.priceLabel);
+    const hasInPersonPrice = extras.some(e => e.priceLabel);
     sum.style.display = 'flex';
     sum.innerHTML = `
       <span class="rx-sum-label">סה״כ מעודכן</span>
-      <span class="rx-sum-vals"><strong>${formatDuration(newTime)}</strong> · <strong>${newPrice} ₪${hasDeco ? ' + קישוט' : ''}</strong></span>`;
+      <span class="rx-sum-vals"><strong>${formatDuration(newTime)}</strong> · <strong>${newPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי' : ''}</strong></span>`;
   }
 
   updateBookingSummary();
