@@ -964,11 +964,10 @@ function apptTimelineRow(item) {
 }
 
 function breakTimelineRow(item, past) {
-  const isBig   = item.kind === 'big';
-  const isFloat = item.kind === 'float';
-  const label   = isFloat ? `☕ הפסקה צפה · מ-${fromMin(item.ref.notBefore)}`
-                : isBig   ? (item.bitten ? '⛔ הפסקה קבועה · ננגסה' : '⛔ הפסקה קבועה')
-                : '⛔ חסימה';
+  // Fixed: the break that always sits in the schedule, and any break Moriya put
+  // there herself. Incidental: the floating one, which lands wherever the day's
+  // appointments push it.
+  const label = item.kind === 'float' ? '☕ הפסקה מזדמנת' : '⛔ הפסקה קבועה';
   // A break the day inherits from the Friday default has no row of its own yet;
   // editing or removing one writes this date's own rows (see materializeBreaks).
   const id      = (item.ref && item.ref.id) || item.id || '';
