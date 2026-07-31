@@ -79,7 +79,14 @@ const ADDON_PICKERS = {
 
 // What the client has chosen in each picker, by picker key → option ids.
 const pickerChoice = {};
-Object.keys(ADDON_PICKERS).forEach(key => { pickerChoice[key] = []; });
+// The last set she confirmed, kept even after she unticks the add-on, so ticking
+// it again during the same booking reopens the picker on what she had rather
+// than a blank sheet. Booking reloads the page, which is what ends its life.
+const pickerLastChoice = {};
+Object.keys(ADDON_PICKERS).forEach(key => {
+  pickerChoice[key]     = [];
+  pickerLastChoice[key] = [];
+});
 
 // The name a chosen option carries as a service, e.g. "קישוט – ציורי גלים".
 function pickerServiceName(cfg, opt) {
@@ -692,7 +699,8 @@ function openPicker(key) {
   const cfg = ADDON_PICKERS[key];
   if (!cfg) return;
   activePicker = key;
-  pickerDraft  = [...(pickerChoice[key] || [])];
+  const chosen = pickerChoice[key] || [];
+  pickerDraft  = [...(chosen.length ? chosen : (pickerLastChoice[key] || []))];
 
   document.getElementById('picker-title').textContent = cfg.title;
   document.getElementById('picker-sub').textContent   = cfg.subtitle || '';
@@ -755,7 +763,8 @@ function closePicker() {
 
 document.getElementById('picker-confirm')?.addEventListener('click', () => {
   if (!activePicker || !pickerDraft.length) return;
-  pickerChoice[activePicker] = [...pickerDraft];
+  pickerChoice[activePicker]     = [...pickerDraft];
+  pickerLastChoice[activePicker] = [...pickerDraft];
   closePicker();
 });
 document.getElementById('picker-close')?.addEventListener('click', closePicker);
