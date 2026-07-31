@@ -106,6 +106,54 @@ function sendReminder(id) {
   window.open(url, '_blank', 'noopener');
 }
 
+// ─── "I changed your appointment" notices ─────────────────────────────────────
+// Appointments Moriya moved or cancelled during this session. Those are the two
+// changes a client can't see coming, so they — and only they — offer a WhatsApp
+// notice alongside the usual reminder, until the dashboard is reloaded.
+const movedAppts     = new Set();
+const cancelledAppts = new Set();
+
+function moveText(appt) {
+  const time = (appt.start_time || '').slice(0, 5);
+  return `${appt.client_name} אהובה, הזזתי את התור שלך ל-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
+}
+
+function cancelNoticeText(appt) {
+  const time = (appt.start_time || '').slice(0, 5);
+  return `${appt.client_name} אהובה, ביטלתי את התור שלך ב-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
+}
+
+function waLink(appt, text) {
+  const phone = waPhone(appt.client_phone);
+  if (!phone) return '';
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+}
+
+function openNotice(id, build) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt) return;
+  const url = waLink(appt, build(appt));
+  if (!url) { alert('אין מספר טלפון תקין ללקוחה זו 🙈'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
+const sendMoveNotice   = id => openNotice(id, moveText);
+const sendCancelNotice = id => openNotice(id, cancelNoticeText);
+
+// Offered the moment the cancellation goes through, while Moriya is still on it.
+async function offerCancelNotice(appt) {
+  if (!waPhone(appt.client_phone)) return;
+  const send = await confirmDialog({
+    icon:        '💬',
+    title:       'להודיע ללקוחה?',
+    message:     cancelNoticeText(appt),
+    confirmText: 'שלחי בוואטסאפ',
+    cancelText:  'לא עכשיו',
+    tone:        'safe',
+  });
+  if (send) sendCancelNotice(appt.id);
+}
+
 async function getAccessToken() {
   try {
     const { data } = await MoriyaAuth.sb.auth.getSession();
@@ -172,8 +220,8 @@ const dash = {
 let adminSelDate  = null;
 let adminCalYear  = new Date().getFullYear();
 let adminCalMonth = new Date().getMonth();
-let dashDayRows   = [];   // availability rows for the selected day
-let dashDayBlocks = [];   // break intervals {start,end} for the selected day
+let dashDayRows   = [];   // raw availability rows for the selected day
+let dashDay       = {};   // the selected day, as read by the shared schedule model
 
 async function initDashboard() {
   await Promise.all([loadAppointments(), loadClients()]);
@@ -186,8 +234,9 @@ async function initDashboard() {
   wireControls();
   wireClientsControls();
 
-  // Default the availability editor to the next Friday and open the calendar there.
-  adminSelDate = nextFridayStr();
+  // Open on the day Moriya is most likely to be looking for: today when she is
+  // working, otherwise the next day she has hours for.
+  adminSelDate = await nextWorkDay(todayStr());
   const [y, m] = adminSelDate.split('-').map(Number);
   adminCalYear = y; adminCalMonth = m - 1;
   setEditorTime('start', '09:00');
@@ -202,27 +251,36 @@ function nextFridayStr() {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
 }
 
-// ─── Availability calendar ────────────────────────────────────────────────────
-// Per-day model (mirrors the public site): Fridays are work days by default
-// (09:00–18:00). Slots are dynamic — appointments consume their real length and
-// pack back-to-back — so the preview below is a base-90 capacity estimate. The
-// default schedule has a fixed, protected 10:30–11:15 break plus a floating
-// 15-min afternoon break (reserved after the first appointment ending ≥14:00).
-const DEFAULT_FRIDAY       = [{ start: 9 * 60, end: 18 * 60 }];            // 09:00–18:00
-const FRIDAY_BIG_BREAK     = { start: 10 * 60 + 30, end: 11 * 60 + 15 };   // 10:30–11:15 (fixed)
-// The floating 15-min break lands at 14:15–14:30 on a base-90 day; used here so
-// the capacity estimate matches the public site (it shifts live with real durations).
-const FRIDAY_FLOAT_DEFAULT = { start: 14 * 60 + 15, end: 14 * 60 + 30 };   // 14:15–14:30 (default)
-const isFridayStr = dateStr => new Date(`${dateStr}T00:00:00`).getDay() === 5;
-
-// The effective open windows for a day, applying the Friday default.
-function effectiveOpen(dateStr, info) {
-  if (info && info.closed) return [];
-  if (info && info.open && info.open.length) return info.open;
-  return isFridayStr(dateStr) ? DEFAULT_FRIDAY.map(w => ({ ...w })) : [];
+// The first day from `startStr` onwards with working hours — a Friday by
+// default, or any day Moriya opened. A month's availability is read once and
+// reused, so this costs one query in the ordinary case. If she has nothing on
+// the books for months, fall back to the coming Friday.
+async function nextWorkDay(startStr) {
+  const d = new Date(`${startStr}T00:00:00`);
+  const months = new Map();
+  for (let i = 0; i < 120; i++) {
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (!months.has(key)) months.set(key, await getMonthDayStates(d.getFullYear(), d.getMonth()));
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (effectiveOpen(dateStr, months.get(key).get(dateStr)).length) return dateStr;
+    d.setDate(d.getDate() + 1);
+  }
+  return nextFridayStr();
 }
 
-// Group a month's availability rows by date → {open[], closed}.
+// ─── Availability calendar ────────────────────────────────────────────────────
+// The per-day model itself lives in js/schedule.js, shared with the public site,
+// so the day Moriya sees here is sliced exactly the way clients are offered it:
+// Fridays open 09:00–18:00 by default, slots on a 90-min grid that real
+// appointment lengths push forward, a fixed 10:30–11:15 break that a long
+// appointment may bite into, and a floating 15-min afternoon break that gets
+// pushed later instead.
+const isFridayStr = MoriyaSchedule.isFriday;
+
+// The effective open windows for a day, applying the Friday default.
+const effectiveOpen = MoriyaSchedule.openWindows;
+
+// Group a month's availability rows by date → the shared day shape.
 async function getMonthDayStates(year, month /* 0-based */) {
   const first   = `${year}-${pad(month + 1)}-01`;
   const lastNum = new Date(year, month + 1, 0).getDate();
@@ -230,13 +288,13 @@ async function getMonthDayStates(year, month /* 0-based */) {
   const byDate = new Map();
   try {
     const { data } = await MoriyaAuth.sb
-      .from('availability').select('date,start_time,end_time,kind').gte('date', first).lte('date', last);
+      .from('availability').select('id,date,start_time,end_time,kind').gte('date', first).lte('date', last);
+    const rowsByDate = new Map();
     (data || []).forEach(r => {
-      const info = byDate.get(r.date) || { open: [], closed: false };
-      if (r.kind === 'closed') info.closed = true;
-      else if (r.kind === 'open') info.open.push({ start: toMin(r.start_time.slice(0, 5)), end: toMin(r.end_time.slice(0, 5)) });
-      byDate.set(r.date, info);
+      if (!rowsByDate.has(r.date)) rowsByDate.set(r.date, []);
+      rowsByDate.get(r.date).push(r);
     });
+    rowsByDate.forEach((rows, date) => byDate.set(date, MoriyaSchedule.readRows(rows)));
   } catch (e) { /* defaults still apply */ }
   return byDate;
 }
@@ -309,12 +367,73 @@ function populateTimeSelects() {
   const hours = [];
   for (let h = 6; h <= 23; h++) hours.push(pad(h));
   const mins = ['00', '15', '30', '45'];
+  // Moving a single appointment or a break is finer work than setting the day's
+  // hours, so those pickers step by five minutes.
+  const mins5 = [];
+  for (let m = 0; m < 60; m += 5) mins5.push(pad(m));
+
   document.querySelectorAll('.ts-hour').forEach(sel => {
     sel.innerHTML = hours.map(h => `<option value="${h}">${h}</option>`).join('');
   });
   document.querySelectorAll('.ts-min').forEach(sel => {
     sel.innerHTML = mins.map(m => `<option value="${m}">${m}</option>`).join('');
   });
+  document.querySelectorAll('.ts-min5').forEach(sel => {
+    sel.innerHTML = mins5.map(m => `<option value="${m}">${m}</option>`).join('');
+  });
+}
+
+// ─── Shared time-picker modal ─────────────────────────────────────────────────
+// Used wherever the day view needs one time (moving a free slot) or a range
+// (changing a break). `onSave` returns an error message to show, or null when
+// it saved and the modal should close.
+let tmSave = null;
+
+function openTimeModal({ title, sub, hint, startLabel, endLabel, start, end, withEnd, onSave }) {
+  const modal = document.getElementById('tm-modal');
+  document.getElementById('tm-title').textContent = title;
+  document.getElementById('tm-sub').innerHTML =
+    `${sub || ''}${hint ? `<br/><span class="tm-hint">${hint}</span>` : ''}`;
+  document.getElementById('tm-start-label').textContent = startLabel || 'משעה';
+  document.getElementById('tm-end-label').textContent   = endLabel   || 'עד שעה';
+  document.getElementById('tm-end-field').style.display = withEnd ? '' : 'none';
+
+  setTimeSelect('tm-start', start);
+  setTimeSelect('tm-end', typeof end === 'number' ? end : start + 15);
+
+  const fb = document.getElementById('tm-feedback');
+  fb.textContent = ''; fb.className = 'avail-feedback';
+
+  tmSave = async () => {
+    const s = readTimeSelect('tm-start');
+    const e = withEnd ? readTimeSelect('tm-end') : null;
+    const btn = document.getElementById('tm-save');
+    btn.disabled = true; btn.textContent = 'שומרת…';
+    const err = await onSave(s, e);
+    btn.disabled = false; btn.textContent = 'שמירה';
+
+    if (err === null) { closeTimeModal(); return; }
+    fb.textContent = err || '';
+    fb.className = err ? 'avail-feedback err' : 'avail-feedback';
+  };
+
+  modal.style.display = 'flex';
+}
+
+function closeTimeModal() {
+  document.getElementById('tm-modal').style.display = 'none';
+  tmSave = null;
+}
+
+function setTimeSelect(prefix, minutes) {
+  // The hour list starts at 06:00 — keep the value inside what it offers.
+  const m = Math.max(6 * 60, Math.min(23 * 60 + 55, Math.round(minutes / 5) * 5));
+  document.getElementById(`${prefix}-h`).value = pad(Math.floor(m / 60));
+  document.getElementById(`${prefix}-m`).value = pad(m % 60);
+}
+
+function readTimeSelect(prefix) {
+  return toMin(`${document.getElementById(`${prefix}-h`).value}:${document.getElementById(`${prefix}-m`).value}`);
 }
 function getEditorTime(which) {
   return `${document.getElementById(`${which}-h`).value}:${document.getElementById(`${which}-m`).value}`;
@@ -637,32 +756,28 @@ function updateAvailPreview() {
     return;
   }
 
-  // Account for breaks already defined on the selected day.
-  const slots = sliceSlots(start, end, dashDayBlocks);
+  // Account for the breaks already defined on the selected day.
+  const slots = sliceSlots(start, end);
   preview.className = 'avail-preview';
   if (slots.length === 0) {
     preview.textContent = 'החלון קצר מ-90 דקות — לא ייווצר אף תור.';
     return;
   }
   // Base-90 estimate; real start times shift with each appointment's length.
+  const brk = MoriyaSchedule.dayBreaks(adminSelDate || '', dashDay);
   let txt = `🟢 עד ${slots.length} תורים (הערכה לפי 90 דק'): ${slots.map(fromMin).join(' · ')}`;
-  if (dashDayBlocks.length) txt += ' — מתחשב בהפסקות; הזמנים בפועל זזים לפי אורך כל תור';
+  if (brk.big || brk.float || (dashDay.block || []).length) {
+    txt += ' — מתחשב בהפסקות; הזמנים בפועל זזים לפי אורך כל תור';
+  }
   preview.textContent = txt;
 }
 
-// Start times for 90-min appointments inside [start, end), skipping past breaks.
-// After a break the 90-min cadence resumes from the break's end.
-function sliceSlots(start, end, breaks) {
-  const bks = (breaks || []).filter(b => b.end > start && b.start < end).sort((a, b) => a.start - b.start);
-  const out = [];
-  let cursor = start;
-  while (cursor + SLOT_LEN <= end) {
-    const hit = bks.find(b => cursor < b.end && cursor + SLOT_LEN > b.start);
-    if (hit) { cursor = hit.end; continue; }   // jump past the break, then resume cadence
-    out.push(cursor);
-    cursor += SLOT_LEN;
-  }
-  return out;
+// Base-90 start times inside [start, end) on the selected day, sliced by the
+// same rules clients get — so the estimate here can't drift from the real day.
+function sliceSlots(start, end) {
+  const brk = MoriyaSchedule.dayBreaks(adminSelDate || '', dashDay);
+  return MoriyaSchedule.anchors({ start, end }, brk.big, brk.float, dashDay.block || [])
+    .filter(m => m + SLOT_LEN <= end);
 }
 
 async function addAvailability() {
@@ -677,8 +792,11 @@ async function addAvailability() {
   const btn = document.getElementById('avail-add');
   btn.disabled = true; btn.textContent = 'מוסיפה…';
 
-  // Opening hours on a day that was marked closed should re-open it first.
+  // Opening hours on a day that was marked closed should re-open it first. A
+  // window of her own also takes a Friday off the default schedule, so the
+  // day's breaks are written out first and survive the change.
   if (editorKind === 'open') {
+    await materializeBreaks(date);
     await MoriyaAuth.sb.from('availability').delete().eq('date', date).eq('kind', 'closed');
   }
   const { error } = await MoriyaAuth.sb.from('availability').insert({
@@ -708,7 +826,9 @@ async function loadDayWindows(date) {
 
   if (error) { list.innerHTML = '<p class="avail-empty">שגיאה בטעינה</p>'; delDayBtn.style.display = 'none'; return; }
 
-  dashDayRows   = data || [];
+  dashDayRows = data || [];
+  dashDay     = MoriyaSchedule.readRows(dashDayRows);
+  updateAvailPreview();   // the preview now reflects this day's breaks
 
   // Everything set here is saved right away; it just isn't offered to clients
   // until the rolling two-month window reaches this date.
@@ -716,20 +836,8 @@ async function loadDayWindows(date) {
     `<div class="day-horizon-note">👀 היום הזה עדיין לא מוצג ללקוחות — הוא ייפתח לקביעת תורים ב-${fmtDate(MoriyaBooking.visibleFrom(date))},
      חודשיים לפני המועד. השעות שתגדירי כאן יישמרו ויופיעו אוטומטית באותו יום.</div>`;
 
-  const closed   = dashDayRows.some(r => r.kind === 'closed');
-  const openRows = dashDayRows.filter(r => r.kind === 'open');
-  const blockRows = dashDayRows.filter(r => r.kind === 'block');
-  // Fridays on the default schedule carry the fixed 10:30–11:15 break (the
-  // 15-min afternoon break is floating and isn't a fixed block).
-  const usingDefaultFri = !closed && openRows.length === 0 && isFridayStr(date);
-  dashDayBlocks = [
-    ...blockRows.map(w => ({ start: toMin(w.start_time.slice(0, 5)), end: toMin(w.end_time.slice(0, 5)) })),
-    ...(usingDefaultFri ? [{ ...FRIDAY_BIG_BREAK }, { ...FRIDAY_FLOAT_DEFAULT }] : [])
-  ];
-  updateAvailPreview();   // preview now reflects this day's breaks
-
   // Day explicitly marked closed.
-  if (closed) {
+  if (dashDay.closed) {
     list.innerHTML = `${note}
       <div class="day-closed">🚫 היום הזה סגור — לא מוצעים בו תורים.</div>
       <button class="admin-btn ghost full" id="reopen-day">↩ החזירי שעות עבודה</button>`;
@@ -738,63 +846,341 @@ async function loadDayWindows(date) {
     return;
   }
 
-  // Effective work windows: explicit rows, or the Friday default (09:00–18:00).
-  const usingDefault = openRows.length === 0 && isFridayStr(date);
-  const openWins = openRows.length
-    ? openRows.map(r => ({ id: r.id, s: toMin(r.start_time.slice(0, 5)), e: toMin(r.end_time.slice(0, 5)), range: `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}` }))
-    : (usingDefault ? [{ id: null, s: 9 * 60, e: 18 * 60, range: '09:00–18:00' }] : []);
-
-  if (!openWins.length && !blockRows.length) {
+  const wins = MoriyaSchedule.openWindows(date, dashDay);
+  if (!wins.length && !dashDay.block.length) {
     list.innerHTML = `${note}<p class="avail-empty">אין שעות עבודה ליום זה.<br/>הוסיפי חלון עבודה כדי לפתוח תורים.</p>`;
     delDayBtn.style.display = 'none';
     return;
   }
 
-  let rowsHtml = note + openWins.map(w => {
-    const slots = sliceSlots(w.s, w.e, dashDayBlocks);
-    const slotsTxt = slots.length ? slots.map(fromMin).join(' · ') : 'אין תורים (חלון קצר מדי)';
-    const defLabel = w.id ? '' : ' <span class="win-default">ברירת מחדל (שישי)</span>';
-    const delBtn = w.id ? `<button class="win-del" data-id="${w.id}">מחיקה</button>` : '';
-    return `<div class="avail-win open">
-      <div class="win-info">
-        <span class="win-badge open">🟢 עבודה</span><strong>${w.range}</strong>${defLabel}
-        <span class="win-slots">עד ${slots.length} תורים (הערכה לפי 90 דק'): ${slotsTxt}</span>
-      </div>
-      ${delBtn}
-    </div>`;
-  }).join('');
+  const items = buildDayItems(date);
+  list.innerHTML = note + renderDaySummary(date, wins, items) + renderDayTimeline(date, items, wins);
+  delDayBtn.style.display = wins.length ? '' : 'none';
+  delDayBtn.onclick = () => deleteDay(date);
+  wireDayActions(list, date);
+}
 
-  rowsHtml += blockRows.map(r => {
-    const range = `${r.start_time.slice(0, 5)}–${r.end_time.slice(0, 5)}`;
-    return `<div class="avail-win block">
-      <div class="win-info"><span class="win-badge block">⛔ הפסקה</span><strong>${range}</strong></div>
-      <button class="win-del" data-id="${r.id}">מחיקה</button>
-    </div>`;
-  }).join('');
+// The headline: the hours Moriya is actually booked for, and what's still open.
+function renderDaySummary(date, wins, items) {
+  if (!wins.length) return '';   // a day with breaks but no working hours
+  const booked = items.filter(i => i.kind === 'appt');
+  const open   = items.filter(i => i.kind === 'free' && !isPastMin(date, i.start));
+  const free   = open.filter(i => i.full);
+  // The shortest treatment on the menu is an hour (the feet gel polish), so a
+  // leftover that long is still worth something even if no full slot fits in it.
+  const gaps   = open.filter(i => !i.full && i.end - i.start >= 60);
 
-  // The default Friday breaks (shown for context; part of the default schedule):
-  // the fixed big break, plus a note about the floating afternoon break.
-  if (usingDefaultFri) {
-    rowsHtml += `
-      <div class="avail-win block">
-        <div class="win-info">
-          <span class="win-badge block">⛔ הפסקה</span><strong>${fromMin(FRIDAY_BIG_BREAK.start)}–${fromMin(FRIDAY_BIG_BREAK.end)}</strong>
-          <span class="win-default">ברירת מחדל (שישי)</span>
-        </div>
-      </div>
-      <div class="avail-win block">
-        <div class="win-info">
-          <span class="win-badge block">☕ הפסקה צפה</span><strong>15 דק׳ אחה״צ</strong>
-          <span class="win-default">אחרי התור הראשון שמסתיים מ-14:00</span>
-        </div>
-      </div>`;
+  const hours = booked.length
+    ? `<strong dir="ltr">${fromMin(Math.min(...booked.map(b => b.start)))}–${fromMin(Math.max(...booked.map(b => b.end)))}</strong>`
+    : '<strong class="win-none">טרם נקבעו תורים</strong>';
+  const left = free.length === 1 ? 'נותר תור פנוי אחד'
+             : free.length ? `נותרו ${free.length} תורים פנויים`
+             : 'לא נותרו תורים פנויים';
+  const shortTxt = gaps.length === 1 ? 'רווח לטיפול קצר'
+                 : gaps.length ? `${gaps.length} רווחים לטיפול קצר` : '';
+
+  // Windows Moriya added herself can be removed one by one; the Friday default
+  // has no row of its own, and goes through "בטלי יום".
+  const chips = wins.filter(w => w.id).map(w =>
+    `<button class="win-del" data-id="${w.id}"><span dir="ltr">${fromMin(w.start)}–${fromMin(w.end)}</span> ✕</button>`).join('');
+
+  return `<div class="avail-win open">
+    <div class="win-head"><span class="win-badge open">🟢 עבודה</span>${hours}</div>
+    <span class="win-slots">${left}${shortTxt ? ` · <span class="win-short">${shortTxt}</span>` : ''}</span>
+    ${chips ? `<div class="win-chips">${chips}</div>` : ''}
+  </div>`;
+}
+
+// ─── The day, hour by hour ────────────────────────────────────────────────────
+// One row per stretch of the day, in order: every booked appointment, every slot
+// still waiting for a client, and every break — each with the two things Moriya
+// can do to it, cancel and move.
+
+// Has this point in the day already gone by?
+function isPastMin(date, minutes) {
+  const today = todayStr();
+  if (date < today) return true;
+  if (date > today) return false;
+  const now = new Date();
+  return minutes <= now.getHours() * 60 + now.getMinutes();
+}
+
+// The selected day as an ordered list of stretches. Cancelled appointments free
+// their time up, so they leave no row behind.
+function buildDayItems(date) {
+  const appts = dash.appointments
+    .filter(a => a.date === date && a.status !== 'cancelled')
+    .map(a => {
+      const start = toMin((a.start_time || '00:00').slice(0, 5));
+      return { key: `appt-${a.id}`, kind: 'appt', start, end: start + (Number(a.duration_min) || 0), appt: a };
+    });
+  return MoriyaSchedule.dayTimeline(date, dashDay, appts);
+}
+
+function renderDayTimeline(date, items, wins) {
+  const rows = items.map(item => timelineRow(date, item, wins)).filter(Boolean);
+
+  if (!rows.length) return '<p class="avail-empty">אין תורים או הפסקות ביום זה.</p>';
+  return `<div class="day-timeline">
+    <h4 class="dt-head">מהלך היום</h4>
+    ${rows.join('')}
+  </div>`;
+}
+
+// Every row is built the same way: the hours, a short label beside them, the
+// buttons pinned to the far edge, and any long detail flowing onto its own line.
+function dtRow(cls, item, label, actions, detail) {
+  return `<div class="dt-row ${cls}">
+    <span class="dt-time" dir="ltr">${fromMin(item.start)}–${fromMin(item.end)}</span>
+    <span class="dt-label">${label}</span>
+    <div class="dt-actions">${actions}</div>
+    ${detail ? `<span class="dt-meta">${detail}</span>` : ''}
+  </div>`;
+}
+
+function timelineRow(date, item, wins) {
+  // A free slot is gone the moment its start passes — nobody can book it any
+  // more. An appointment or a break is still live until it ends.
+  const past = item.kind === 'free'
+    ? isPastMin(date, item.start)
+    : isPastMin(date, item.end);
+
+  if (item.kind === 'appt') return apptTimelineRow(item);
+
+  if (item.kind === 'free') {
+    // Leftovers too short for a standard appointment are shown for context but
+    // aren't slots anyone can take, so they carry no actions.
+    if (!item.full) {
+      const gap = item.end - item.start;
+      return gap < 15 ? '' : dtRow('is-gap', item, `רווח ${gap} דק׳ · לטיפול קצר`, '');
+    }
+    const win     = item.win || wins[0] || { end: item.end };
+    const actions = past ? '' : `
+      <button class="dt-btn move" data-act="free-move"
+              data-start="${item.start}" data-end="${item.end}" data-win-end="${win.end}">הזזה</button>
+      <button class="dt-btn del" title="ביטול התור — השעה לא תוצע יותר ללקוחות" aria-label="ביטול התור"
+              data-act="free-block" data-start="${item.start}" data-end="${item.end}">✕</button>`;
+    return dtRow(`is-free${past ? ' is-past' : ''}`, item,
+      '<span class="is-open">לא הוזמן עדיין</span>', actions);
   }
 
-  list.innerHTML = rowsHtml;
-  delDayBtn.style.display = openWins.length ? '' : 'none';
-  delDayBtn.onclick = () => deleteDay(date);
+  return breakTimelineRow(item, past);
+}
+
+// A booked appointment is locked once it is over — done is done.
+function apptTimelineRow(item) {
+  const a       = item.appt;
+  const svc     = (a.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
+  const locked  = isPastAppt(a);
+  const outside = item.outside ? '<span class="dt-flag">מחוץ לשעות העבודה</span>' : '';
+  // The notice button appears only for an appointment Moriya actually moved.
+  const notify  = movedAppts.has(String(a.id)) && a.client_phone && !locked
+    ? `<button class="dt-btn notify" data-act="appt-notify" data-id="${a.id}">💬</button>` : '';
+  const actions = locked ? '' : `${notify}
+    <button class="dt-btn move" data-act="appt-move" data-id="${a.id}">הזזה</button>
+    <button class="dt-btn del" title="ביטול התור" aria-label="ביטול התור של ${escAttr(a.client_name)}"
+            data-act="appt-cancel" data-id="${a.id}">✕</button>`;
+
+  return dtRow(`is-appt${locked ? ' is-past' : ''}`, item,
+    `<span class="dt-who">${escAttr(a.client_name)}</span>${outside}`, actions,
+    `${escAttr(svc)} · ${a.duration_min} דק׳ · ${ils(Number(a.total_price || 0))}`);
+}
+
+function breakTimelineRow(item, past) {
+  // Fixed: the break that always sits in the schedule, and any break Moriya put
+  // there herself. Incidental: the floating one, which lands wherever the day's
+  // appointments push it.
+  const label = item.kind === 'float' ? '☕ הפסקה מזדמנת' : '⛔ הפסקה קבועה';
+  // A break the day inherits from the Friday default has no row of its own yet;
+  // editing or removing one writes this date's own rows (see materializeBreaks).
+  const id      = (item.ref && item.ref.id) || item.id || '';
+  const actions = past ? '' : `
+    <button class="dt-btn move" data-act="brk-edit" data-brk="${item.kind}" data-id="${id}"
+            data-start="${item.start}" data-end="${item.end}">שינוי</button>
+    <button class="dt-btn del" title="ביטול ההפסקה" aria-label="ביטול ההפסקה"
+            data-act="brk-del" data-brk="${item.kind}" data-id="${id}">✕</button>`;
+
+  return dtRow(`is-break${past ? ' is-past' : ''}`, item, label, actions);
+}
+
+function wireDayActions(list, date) {
   list.querySelectorAll('.win-del').forEach(b =>
     b.addEventListener('click', () => deleteWindow(b.dataset.id, date)));
+
+  list.querySelectorAll('[data-act]').forEach(b => b.addEventListener('click', () => {
+    const d = b.dataset;
+    switch (d.act) {
+      case 'appt-cancel': return adminCancel(d.id);
+      case 'appt-move':   return openReschedule(d.id, true);
+      case 'appt-notify': return sendMoveNotice(d.id);
+      case 'free-block':  return cancelFreeSlot(date, Number(d.start), Number(d.end));
+      case 'free-move':   return moveFreeSlot(date, Number(d.start), Number(d.end), Number(d.winEnd));
+      case 'brk-del':     return deleteBreak(date, d.brk, d.id);
+      case 'brk-edit':    return editBreak(date, d.brk, d.id, Number(d.start), Number(d.end));
+    }
+  }));
+}
+
+// Re-read the selected day and repaint it along with the calendar markers.
+async function refreshDayView() {
+  if (adminSelDate) await loadDayWindows(adminSelDate);
+  renderAdminCalendar();
+}
+
+// ─── Free slots: cancel and move ──────────────────────────────────────────────
+// A slot nobody has booked is not an entity of its own — it is simply time the
+// grid left open. So cancelling one blocks that time, and moving one blocks the
+// stretch in front of it, which slides that slot (and everything after it) to
+// the hour Moriya picked.
+
+async function cancelFreeSlot(date, start, end) {
+  const ok = await confirmDialog({
+    icon:        '🚫',
+    title:       'לבטל את התור הפנוי?',
+    message:     `הזמן ${fromMin(start)}–${fromMin(end)} ייחסם ולא יוצע יותר ללקוחות. אפשר להחזיר אותו בכל רגע ממחיקת ההפסקה.`,
+    confirmText: 'כן, בטלי את התור',
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+  if (!ok) return;
+
+  const { error } = await MoriyaAuth.sb.from('availability')
+    .insert({ date, start_time: fromMin(start), end_time: fromMin(end), kind: 'block' });
+  if (error) { alert('הביטול נכשל: ' + error.message); return; }
+  refreshDayView();
+}
+
+function moveFreeSlot(date, start, end, winEnd) {
+  openTimeModal({
+    title:      'הזזת תור פנוי',
+    sub:        `כרגע <span dir="ltr">${fromMin(start)}–${fromMin(end)}</span> · התור עוד לא הוזמן`,
+    hint:       'קדימה בלבד. הזמן שלפני השעה החדשה ייחסם, והתורים הפנויים שאחריו יזוזו איתו.',
+    startLabel: 'לשעה',
+    start,
+    onSave: async (newStart) => {
+      if (newStart <= start) return 'אפשר להזיז תור פנוי רק לשעה מאוחרת יותר. כדי להקדים את תחילת היום שני את שעות העבודה.';
+      if (newStart >= winEnd) return 'השעה שנבחרה מחוץ לשעות העבודה של היום.';
+
+      // Try the change on paper first: with the gap blocked, is there still room
+      // for a full appointment at that hour? If not, say so and let her decide.
+      const probe = {
+        ...dashDay,
+        block: [...(dashDay.block || []), { start, end: newStart }],
+      };
+      const fits = MoriyaSchedule.availableStarts(SLOT_LEN, date, probe, apptIntervals(date)).includes(newStart);
+      if (!fits) {
+        const ok = await confirmDialog({
+          icon:        '⚠️',
+          title:       'לא נשאר מקום לתור מלא',
+          message:     `בשעה ${fromMin(newStart)} אין ${SLOT_LEN} דקות פנויות עד ההפסקה או עד סוף היום, ולכן התור לא יוצע ללקוחות בשעה הזו.`,
+          confirmText: 'בכל זאת, הזיזי',
+          cancelText:  'חזרה',
+          tone:        'danger',
+        });
+        if (!ok) return '';
+      }
+
+      const { error } = await MoriyaAuth.sb.from('availability')
+        .insert({ date, start_time: fromMin(start), end_time: fromMin(newStart), kind: 'block' });
+      if (error) return 'ההזזה נכשלה: ' + error.message;
+      refreshDayView();
+      return null;
+    },
+  });
+}
+
+// The day's booked time, as plain intervals.
+function apptIntervals(date) {
+  return dash.appointments
+    .filter(a => a.date === date && a.status !== 'cancelled')
+    .map(a => {
+      const s = toMin((a.start_time || '00:00').slice(0, 5));
+      return { start: s, end: s + (Number(a.duration_min) || 0) };
+    });
+}
+
+// ─── Breaks: cancel and change ────────────────────────────────────────────────
+// A break Moriya added is a row she can edit outright. The Friday defaults have
+// no row until she touches them — the first change freezes that date's breaks
+// into rows of its own, so every other Friday keeps the standard schedule.
+
+async function materializeBreaks(date) {
+  if (!MoriyaSchedule.usesDefaults(date, dashDay)) return true;
+
+  const brk  = MoriyaSchedule.dayBreaks(date, dashDay);
+  const rows = [{ date, start_time: '00:00', end_time: '00:00', kind: 'nodefault' }];
+  if (brk.big) {
+    rows.push({ date, start_time: fromMin(brk.big.start), end_time: fromMin(brk.big.end), kind: 'bigbreak' });
+  }
+  if (brk.float) {
+    rows.push({
+      date, kind: 'float',
+      start_time: fromMin(brk.float.notBefore),
+      end_time:   fromMin(brk.float.notBefore + brk.float.len),
+    });
+  }
+
+  const { error } = await MoriyaAuth.sb.from('availability').insert(rows);
+  if (error) { alert('שגיאה בשמירת ההפסקות ליום זה: ' + error.message); return false; }
+
+  // Work from the rows that now exist, so the change lands on a real row.
+  const { data } = await MoriyaAuth.sb.from('availability').select('*').eq('date', date);
+  dashDayRows = data || [];
+  dashDay     = MoriyaSchedule.readRows(dashDayRows);
+  return true;
+}
+
+// The row behind a break in the timeline, materialising this date's own rows first.
+async function breakRowId(date, brkKind, id) {
+  if (id) return id;
+  if (!(await materializeBreaks(date))) return null;
+  const kindOf = { big: 'bigbreak', float: 'float', block: 'block' }[brkKind];
+  const row = dashDayRows.find(r => r.kind === kindOf);
+  return row ? row.id : null;
+}
+
+async function deleteBreak(date, brkKind, id) {
+  const what = brkKind === 'float' ? 'ההפסקה הצפה' : 'ההפסקה';
+  const ok = await confirmDialog({
+    icon:        '🗑️',
+    title:       `לבטל את ${what} ביום זה?`,
+    message:     brkKind === 'block'
+      ? 'החסימה תוסר והזמן יחזור להיות פנוי לתורים.'
+      : `${what} תבוטל בתאריך הזה בלבד — כל שאר ימי שישי ימשיכו כרגיל.`,
+    confirmText: 'כן, בטלי',
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+  if (!ok) return;
+
+  const rowId = await breakRowId(date, brkKind, id);
+  if (!rowId) { refreshDayView(); return; }
+  const { error } = await MoriyaAuth.sb.from('availability').delete().eq('id', rowId);
+  if (error) { alert('הביטול נכשל: ' + error.message); return; }
+  refreshDayView();
+}
+
+function editBreak(date, brkKind, id, start, end) {
+  const isFloat = brkKind === 'float';
+  openTimeModal({
+    title:      isFloat ? 'שינוי ההפסקה הצפה' : 'שינוי ההפסקה',
+    sub:        `כרגע <span dir="ltr">${fromMin(start)}–${fromMin(end)}</span>`,
+    hint:       isFloat
+      ? 'נלקחת אחרי התור הראשון שמסתיים משעת ההתחלה, ואורכה לפי הטווח כאן.'
+      : 'קבועה בשעות שתגדירי. תור ארוך יכול לנגוס בה, אך לא לחצות אותה.',
+    start, end, withEnd: true,
+    onSave: async (newStart, newEnd) => {
+      if (newEnd <= newStart) return 'שעת הסיום חייבת להיות אחרי שעת ההתחלה';
+
+      const rowId = await breakRowId(date, brkKind, id);
+      if (!rowId) return 'לא הצלחתי לשמור את ההפסקה ליום זה';
+      const { error } = await MoriyaAuth.sb.from('availability')
+        .update({ start_time: fromMin(newStart), end_time: fromMin(newEnd) }).eq('id', rowId);
+      if (error) return 'השמירה נכשלה: ' + error.message;
+      refreshDayView();
+      return null;
+    },
+  });
 }
 
 // Appointments (non-cancelled) on `date` overlapping [sMin, eMin) minutes.
@@ -946,7 +1332,15 @@ function renderAppointments() {
     // Reminder only makes sense for an upcoming appointment that has a phone.
     const canRemind = !cancelled && !past && a.client_phone;
     const remindBtn = canRemind ? `<button class="appt-btn remind" data-id="${a.id}">💬 שלחי תזכורת</button>` : '';
-    const actions = (cancelled || past) ? '' : `
+    // An appointment Moriya moved gets its own notice, so the client hears about
+    // the new time from her rather than discovering it.
+    const movedBtn = canRemind && movedAppts.has(String(a.id))
+      ? `<button class="appt-btn moved" data-id="${a.id}">💬 הודעה על ההזזה</button>` : '';
+    // A cancelled appointment keeps one action: telling the client it's off.
+    const cancelledBtn = cancelled && cancelledAppts.has(String(a.id)) && a.client_phone
+      ? `<button class="appt-btn moved" data-act="cancel-notice" data-id="${a.id}">💬 הודעה על הביטול</button>` : '';
+    const actions = cancelled ? cancelledBtn : past ? '' : `
+      ${movedBtn}
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
       <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
@@ -967,6 +1361,8 @@ function renderAppointments() {
 
   box.querySelectorAll('.appt-btn.remind').forEach(b =>
     b.addEventListener('click', () => sendReminder(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.moved').forEach(b => b.addEventListener('click', () =>
+    (b.dataset.act === 'cancel-notice' ? sendCancelNotice : sendMoveNotice)(b.dataset.id)));
   box.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
@@ -1497,17 +1893,23 @@ async function adminCancel(id) {
   appt.status = 'cancelled';
   if (!calOk) alert('התור בוטל במערכת, אך ייתכן שלא הוסר מיומן Google — כדאי לבדוק ידנית.');
 
-  renderKPIs(); renderCharts(); renderAppointments();
+  cancelledAppts.add(String(appt.id));
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+  offerCancelNotice(appt);
 }
 
 // ── Reschedule modal ──
 let reschedTarget = null;
 let reschedSelDate = null;
 let reschedSelTime = null;
+let reschedDay = {};           // the shown day, as read by the schedule model
 let reschedCalYear = new Date().getFullYear();
 let reschedCalMonth = new Date().getMonth();
 
-function openReschedule(id) {
+// `sameDay` opens the modal on the hour alone — the day view's default, since a
+// move there is almost always a shift within the day being looked at. The date
+// is one button away.
+function openReschedule(id, sameDay) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
   if (!appt || appt.status === 'cancelled' || isPastAppt(appt)) return;
   reschedTarget  = appt;
@@ -1526,8 +1928,24 @@ function openReschedule(id) {
   document.getElementById('resched-feedback').textContent = '';
   document.getElementById('resched-feedback').className = 'avail-feedback';
 
+  // Back to the picker: the "done" panel belongs to the move just before it.
+  document.getElementById('resched-done').style.display = 'none';
+  document.getElementById('resched-picker').style.display = '';
+  document.getElementById('resched-current').style.display = '';
+  document.getElementById('resched-save').style.display = '';
+
+  showReschedDate(!sameDay);
+  document.getElementById('resched-title').textContent =
+    sameDay ? 'הזזת שעה' : 'הזזת תור';
+
   renderReschedCalendar().then(() => loadReschedSlots(reschedSelDate));
   document.getElementById('resched-modal').style.display = 'flex';
+}
+
+// Show the calendar, or fold it away behind the "another date" button.
+function showReschedDate(open) {
+  document.getElementById('resched-cal-box').style.display   = open ? '' : 'none';
+  document.getElementById('resched-other-date').style.display = open ? 'none' : '';
 }
 
 async function renderReschedCalendar() {
@@ -1581,6 +1999,57 @@ function selectReschedDate(dateStr) {
   loadReschedSlots(dateStr);
 }
 
+// What a move to `start` would actually disturb, or null when it disturbs
+// nothing. The grid offers the tidy slots on the 90-minute rhythm; here only
+// real clashes count, because an hour off the rhythm is still a perfectly good
+// hour when the day has room for it.
+function reschedConflict(dateStr, day, start) {
+  const end  = start + (Number(reschedTarget.duration_min) || 0);
+  const wins = MoriyaSchedule.openWindows(dateStr, day);
+  if (!wins.some(w => start >= w.start && end <= w.end)) return 'מחוץ לשעות העבודה';
+
+  // Another client would have to move for this one.
+  const clash = dash.appointments.find(a => {
+    if (a.date !== dateStr || a.status === 'cancelled' || String(a.id) === String(reschedTarget.id)) return false;
+    const s = toMin((a.start_time || '00:00').slice(0, 5));
+    return start < s + (Number(a.duration_min) || 0) && end > s;
+  });
+  if (clash) return `מתנגשת בתור של ${clash.client_name}`;
+
+  const brk = MoriyaSchedule.dayBreaks(dateStr, day);
+  // The fixed break is meant to be bitten into: an appointment may run into it
+  // and stop at its end. Starting inside it, or running past it, is not biting.
+  if (brk.big && ((start >= brk.big.start && start < brk.big.end) ||
+                  (start < brk.big.start && end > brk.big.end))) return 'נופלת בהפסקה קבועה';
+  if ((day.block || []).some(b => start < b.end && end > b.start)) return 'נופלת בהפסקה קבועה';
+  // The floating break isn't bitten, it's pushed — worth saying out loud.
+  if (brk.float && end > brk.float.notBefore && start < brk.float.notBefore + brk.float.len) {
+    return 'תדחה את ההפסקה המזדמנת';
+  }
+  return null;
+}
+
+// Times the day genuinely has room for, sliced by the same rules clients get —
+// breaks included, so a move never lands on top of one by accident.
+async function reschedFreeStarts(dateStr) {
+  const [Y, M] = dateStr.split('-').map(Number);
+  const states = await getMonthDayStates(Y, M - 1);
+  const day    = states.get(dateStr) || {};
+  reschedDay   = day;
+  const today  = todayStr();
+  const notBefore = dateStr === today ? new Date().getHours() * 60 + new Date().getMinutes() : undefined;
+
+  // The appointment being moved doesn't block itself.
+  const busy = dash.appointments
+    .filter(a => a.date === dateStr && a.status !== 'cancelled' && String(a.id) !== String(reschedTarget.id))
+    .map(a => {
+      const s = toMin((a.start_time || '00:00').slice(0, 5));
+      return { start: s, end: s + (Number(a.duration_min) || 0) };
+    });
+
+  return MoriyaSchedule.availableStarts(reschedTarget.duration_min, dateStr, day, busy, notBefore);
+}
+
 async function loadReschedSlots(dateStr) {
   const box  = document.getElementById('resched-slots-box');
   const grid = document.getElementById('resched-slots-grid');
@@ -1590,36 +2059,17 @@ async function loadReschedSlots(dateStr) {
   grid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות…</span></div>';
   refreshReschedSave();
 
-  const [Y, M] = dateStr.split('-').map(Number);
-  const states  = await getMonthDayStates(Y, M - 1);
-  const windows = effectiveOpen(dateStr, states.get(dateStr));
-  const duration = reschedTarget.duration_min;
+  const starts = await reschedFreeStarts(dateStr);
+  setTimeSelect('resched', reschedSelTime ? toMin(reschedSelTime) : (starts[0] ?? 9 * 60));
+  document.getElementById('resched-manual-note').textContent = '';
 
-  // Other active appointments on this day (the one being moved doesn't block itself).
-  const busy = dash.appointments
-    .filter(a => a.date === dateStr && a.status !== 'cancelled' && String(a.id) !== String(reschedTarget.id))
-    .map(a => ({ start: toMin(a.start_time.slice(0, 5)), end: toMin(a.start_time.slice(0, 5)) + a.duration_min }));
+  grid.innerHTML = starts.length
+    ? starts.map(m => {
+        const label = fromMin(m);
+        return `<div class="time-slot ${label === reschedSelTime ? 'selected' : ''}" data-time="${label}">${label}</div>`;
+      }).join('')
+    : '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>אפשר לבחור יום אחר, או להזין שעה ידנית למטה</div>';
 
-  const today  = todayStr();
-  const nowMin = new Date().getHours() * 60 + new Date().getMinutes();
-
-  const slots = [];
-  windows.forEach(w => {
-    for (let m = w.start; m + duration <= w.end; m += 15) {
-      if (dateStr === today && m <= nowMin) continue;             // no past times today
-      const overlaps = busy.some(b => m < b.end && m + duration > b.start);
-      slots.push({ min: m, label: `${pad(Math.floor(m / 60))}:${pad(m % 60)}`, busy: overlaps });
-    }
-  });
-
-  if (!slots.length) {
-    grid.innerHTML = '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>בחרי יום אחר</div>';
-    return;
-  }
-
-  grid.innerHTML = slots.map(s =>
-    `<div class="time-slot ${s.busy ? 'busy' : ''} ${s.label === reschedSelTime ? 'selected' : ''}" ${s.busy ? '' : `data-time="${s.label}"`}>${s.label}</div>`
-  ).join('');
   grid.querySelectorAll('.time-slot[data-time]').forEach(c =>
     c.addEventListener('click', () => selectReschedSlot(c.dataset.time)));
 }
@@ -1628,6 +2078,30 @@ function selectReschedSlot(time) {
   reschedSelTime = time;
   document.querySelectorAll('#resched-slots-grid .time-slot').forEach(c => c.classList.remove('selected'));
   document.querySelector(`#resched-slots-grid .time-slot[data-time="${time}"]`)?.classList.add('selected');
+  document.getElementById('resched-manual-note').textContent = '';
+  refreshReschedSave();
+}
+
+// Any hour Moriya types in is allowed. She is only warned when the hour would
+// actually displace something — another client, or a break that gets pushed
+// rather than bitten into.
+function pickManualReschedTime() {
+  const min  = readTimeSelect('resched');
+  const time = fromMin(min);
+  reschedSelTime = time;
+  document.querySelectorAll('#resched-slots-grid .time-slot').forEach(c =>
+    c.classList.toggle('selected', c.dataset.time === time));
+
+  const note = document.getElementById('resched-manual-note');
+  const why  = reschedConflict(reschedSelDate, reschedDay, min);
+  const end  = fromMin(min + (Number(reschedTarget.duration_min) || 0));
+  if (why) {
+    note.innerHTML = `⚠ <span dir="ltr">${time}–${end}</span> ${why}. אפשר לשמור בכל זאת.`;
+    note.className = 'mt-note warn';
+  } else {
+    note.innerHTML = `✓ <span dir="ltr">${time}–${end}</span> פנוי`;
+    note.className = 'mt-note ok';
+  }
   refreshReschedSave();
 }
 
@@ -1643,9 +2117,26 @@ async function saveReschedule() {
   const fb = document.getElementById('resched-feedback');
   if (!date || !time) { fb.textContent = 'יש לבחור תאריך ושעה'; fb.className = 'avail-feedback err'; return; }
 
+  // An hour with room for the appointment is simply taken. Only one that would
+  // displace something is worth stopping for.
+  const why = reschedConflict(date, reschedDay, toMin(time));
+  if (why) {
+    const ok = await confirmDialog({
+      icon:        '⚠️',
+      title:       'שימי לב',
+      message:     `השעה ${time} בתאריך ${fmtDate(date)} ${why}. להזיז לשם בכל זאת?`,
+      confirmText: 'כן, הזיזי לשם',
+      cancelText:  'חזרה',
+      tone:        'danger',
+    });
+    if (!ok) return;
+  }
+
   const btn = document.getElementById('resched-save');
   btn.disabled = true; btn.textContent = 'מעדכנת…';
 
+  // The client's appointment lives on Moriya's Google Calendar too, so the move
+  // is pushed there before the database is touched.
   let calOk = true;
   try {
     if (reschedTarget.google_event_id) {
@@ -1668,9 +2159,28 @@ async function saveReschedule() {
   if (error) { fb.textContent = 'העדכון נכשל: ' + error.message; fb.className = 'avail-feedback err'; return; }
   reschedTarget.date = date; reschedTarget.start_time = time;
 
-  document.getElementById('resched-modal').style.display = 'none';
   if (!calOk) alert('התור עודכן במערכת, אך ייתכן שלא עודכן ביומן Google — כדאי לבדוק ידנית.');
-  renderKPIs(); renderCharts(); renderAppointments();
+  movedAppts.add(String(reschedTarget.id));
+  showReschedDone(reschedTarget);
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+}
+
+// The move is saved; now offer the one thing only Moriya can do — tell her.
+function showReschedDone(appt) {
+  const done = document.getElementById('resched-done');
+  document.getElementById('resched-picker').style.display  = 'none';
+  document.getElementById('resched-current').style.display = 'none';
+  document.getElementById('resched-save').style.display    = 'none';
+
+  const notify = document.getElementById('resched-notify');
+  const hasPhone = !!waPhone(appt.client_phone);
+  notify.style.display = hasPhone ? '' : 'none';
+  document.getElementById('resched-done-msg').textContent = hasPhone
+    ? moveText(appt)
+    : `${appt.client_name} — אין מספר טלפון שמור, אז אי אפשר לשלוח הודעה מכאן.`;
+
+  done.style.display = 'block';
+  notify.onclick = () => sendMoveNotice(appt.id);
 }
 
 // ─── Controls (range tabs, filters, modal) ────────────────────────────────────
@@ -1708,12 +2218,28 @@ function wireControls() {
     });
   });
 
-  document.getElementById('resched-close').addEventListener('click', () =>
-    document.getElementById('resched-modal').style.display = 'none');
+  const closeResched = () => document.getElementById('resched-modal').style.display = 'none';
+  document.getElementById('resched-close').addEventListener('click', closeResched);
+  document.getElementById('resched-done-close').addEventListener('click', closeResched);
   document.getElementById('resched-modal').addEventListener('click', e => {
     if (e.target.id === 'resched-modal') e.target.style.display = 'none';
   });
   document.getElementById('resched-save').addEventListener('click', saveReschedule);
+  // Turning the dials picks the hour straight away, so what the note says and
+  // what the save button would write are never out of step.
+  document.getElementById('resched-manual').addEventListener('click', pickManualReschedTime);
+  ['resched-h', 'resched-m'].forEach(id =>
+    document.getElementById(id).addEventListener('change', pickManualReschedTime));
+  document.getElementById('resched-other-date').addEventListener('click', () => {
+    showReschedDate(true);
+    document.getElementById('resched-title').textContent = 'הזזת תור';
+  });
+
+  document.getElementById('tm-close').addEventListener('click', closeTimeModal);
+  document.getElementById('tm-modal').addEventListener('click', e => {
+    if (e.target.id === 'tm-modal') closeTimeModal();
+  });
+  document.getElementById('tm-save').addEventListener('click', () => { if (tmSave) tmSave(); });
 }
 
 // Go.
