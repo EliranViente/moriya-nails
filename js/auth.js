@@ -30,9 +30,13 @@ const MoriyaAuth = {
     return this.isAdmin() || !!(this.profile && this.profile.feet_gel_allowed);
   },
 
+  // The name saved on the profile always wins — the one she last booked with, or
+  // the one Moriya set for her in the dashboard. Google's name is only the
+  // starting point (see seedProfileName), so logging out and back in never
+  // undoes a rename.
   displayName() {
     const meta = (this.user && this.user.user_metadata) || {};
-    return (this.profile && this.profile.full_name) ||
+    return ((this.profile && this.profile.full_name) || '').trim() ||
            meta.full_name || meta.name ||
            ((this.user && this.user.email) ? this.user.email.split('@')[0] : '');
   },
@@ -65,6 +69,37 @@ const MoriyaAuth = {
     } catch (e) {
       console.warn('loadProfile failed:', e.message);
       this.profile = null;
+    }
+    await this.seedProfileName();
+  },
+
+  // Copy the Google name into the profile the first time, and only then. Once
+  // the profile carries a name, that name is the one shown everywhere and this
+  // does nothing — which is what keeps a rename (hers on the booking form, or
+  // Moriya's in the dashboard) from being overwritten on the next login.
+  //
+  // The signup trigger normally fills the row in, but a client who signed in
+  // before it existed — or whose Google account had no name to give at the time
+  // — can still be sitting there nameless, so the row is repaired (or created)
+  // here rather than left to fall back to Google's copy forever.
+  async seedProfileName() {
+    if (!this.user) return;
+    if (((this.profile && this.profile.full_name) || '').trim()) return;
+
+    const meta = this.user.user_metadata || {};
+    const googleName = (meta.full_name || meta.name || '').trim();
+    if (!googleName) return;
+
+    try {
+      // Only the columns listed here are written, so a profile that already
+      // exists keeps its phone and its feet gel-polish permission untouched.
+      const { data, error } = await sb.from('profiles')
+        .upsert({ id: this.user.id, email: this.user.email, full_name: googleName })
+        .select().maybeSingle();
+      if (error) { console.warn('seedProfileName failed:', error.message); return; }
+      if (data) this.profile = data;
+    } catch (e) {
+      console.warn('seedProfileName failed:', e.message);
     }
   },
 };

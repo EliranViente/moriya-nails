@@ -408,6 +408,33 @@
 .clients-table .cl-name:hover { color: var(--pink-500); text-decoration: underline; }
 .clients-table .cl-muted { color: var(--gray-400); }
 
+/* Renaming a client: in edit mode the name cell becomes a text box, so the
+   English name Google handed over can be replaced with the Hebrew one Moriya
+   uses. With a box in the cell the name is no longer the details-card handle,
+   so it must stop looking like one. */
+.clients-table.is-editing .cl-name { cursor: default; padding-top: 6px; padding-bottom: 6px; }
+.clients-table.is-editing .cl-name:hover { color: var(--gray-800); text-decoration: none; }
+.cl-name-input {
+  font-family: var(--font);
+  font-size: inherit;
+  font-weight: 700;
+  color: var(--gray-800);
+  width: 100%;
+  min-width: 120px;
+  padding: 7px 10px;
+  background: var(--white);
+  border: 1.5px solid var(--pink-200);
+  border-radius: var(--radius-sm);
+  transition: border-color var(--transition), background var(--transition);
+}
+.cl-name-input::placeholder { font-weight: 500; color: var(--gray-400); }
+.cl-name-input:focus { outline: none; border-color: var(--pink-400); background: var(--pink-50); }
+.cl-name-input:disabled { opacity: 0.55; cursor: default; }
+/* A short tint after the save lands (or fails), so a rename is visibly stored
+   rather than just typed. */
+.cl-name-input.is-saved { border-color: #3fa06a; background: #eef9f2; }
+.cl-name-input.is-error { border-color: #c0392b; background: #fdf0f0; }
+
 /* Feet gel-polish permission – a narrow toggle column at the end of the table.
    The label fills the whole cell (hence the zeroed padding), so anywhere in the
    column is a comfortable target rather than just the 24px box itself. */

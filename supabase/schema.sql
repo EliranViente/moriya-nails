@@ -20,6 +20,10 @@ $$;
 create table if not exists public.profiles (
   id          uuid primary key references auth.users(id) on delete cascade,
   email       text,
+  -- The name the client is known by, and the source of truth for it: whatever
+  -- she last booked under, or whatever the admin renamed her to. Seeded from her
+  -- Google name on first sign-in (handle_new_user below) and never overwritten
+  -- from Google again, so a rename survives logging out and back in.
   full_name   text,
   phone       text,
   created_at  timestamptz default now(),
@@ -236,9 +240,10 @@ drop policy if exists "profiles_insert_own" on public.profiles;
 create policy "profiles_insert_own" on public.profiles
   for insert with check (id = auth.uid());
 
--- The admin manages the feet gel-polish flag from the dashboard, which means
--- updating other people's profiles. Permissive policies are OR-ed, so this adds
--- to profiles_update_own rather than replacing it.
+-- The admin manages the feet gel-polish flag from the dashboard and renames
+-- clients there (turning a Google name in English into the Hebrew one she uses),
+-- both of which mean updating other people's profiles. Permissive policies are
+-- OR-ed, so this adds to profiles_update_own rather than replacing it.
 drop policy if exists "profiles_admin_update" on public.profiles;
 create policy "profiles_admin_update" on public.profiles
   for update using (public.is_admin()) with check (public.is_admin());

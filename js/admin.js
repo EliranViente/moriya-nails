@@ -1007,11 +1007,17 @@ function renderClients() {
   // Out of edit mode the permission checkbox is disabled outright, so the column
   // can still be read but not changed by a stray tap. The remove button is only
   // rendered while editing; CSS hides its column too, so the table keeps its
-  // shape.
+  // shape. The name likewise turns into a text box only while editing — outside
+  // it, it stays the plain handle that opens the client's details card.
   const editing = dash.clientsEditing;
   tbody.innerHTML = list.map(c => `
     <tr class="client-row" data-client-id="${c.id}">
-      <td class="cl-name">${c.full_name || MUTED}</td>
+      <td class="cl-name">${editing
+        ? `<input type="text" class="cl-name-input" data-client-id="${c.id}"
+                  value="${escAttr(c.full_name || '')}" placeholder="שם הלקוחה"
+                  autocomplete="off" spellcheck="false"
+                  aria-label="שם הלקוחה — ניתן לעריכה" />`
+        : (c.full_name || MUTED)}</td>
       <td dir="ltr" style="text-align:right;">${c.phone || MUTED}</td>
       <td dir="ltr" style="text-align:right;">${c.email || MUTED}</td>
       <td>${fmtStamp(c.last_appointment, true)}</td>
@@ -1041,6 +1047,15 @@ function escAttr(s) {
 // Turn the clients list's edit mode on or off and re-render to match. Leaving
 // edit mode is always allowed; entering it is a deliberate choice from the ⋮ menu.
 function setClientsEditing(on) {
+  // Leaving edit mode straight from a name box must not lose what she just typed.
+  // Safari doesn't focus a button on click, so the box may never blur on its own
+  // before the table is redrawn without it — flush it here, while edit mode is
+  // still on, since the save refuses to run once the flag is off.
+  const focused = document.activeElement;
+  if (dash.clientsEditing && focused && focused.classList.contains('cl-name-input')) {
+    saveClientName(focused);
+  }
+
   dash.clientsEditing = !!on;
 
   const table  = document.getElementById('clients-table');
@@ -1050,7 +1065,77 @@ function setClientsEditing(on) {
   if (banner) banner.hidden = !dash.clientsEditing;
   if (label)  label.textContent = dash.clientsEditing ? 'סיום עריכה' : 'עריכת הרשימה';
 
+  // The details card is pinned to a row that is about to be redrawn, and while
+  // editing the name is a text box rather than the handle that opens it — so
+  // close it either way instead of leaving it stranded on a stale client.
+  document.getElementById('client-panel')?.classList.remove('is-open');
+
   renderClients();
+}
+
+// Rename a client straight from the table. The name on the profile is the one
+// she is greeted by on the site and the one her booking form starts prefilled
+// with, so this is where a Google name in English becomes the Hebrew name Moriya
+// actually calls her by — and it sticks, including after she logs out and back
+// in with Google.
+//
+// Saved when the box loses focus or on Enter; Escape puts the old name back. An
+// empty box is not a rename — it is restored rather than saved, so no client can
+// be left nameless. Past appointments keep the name they were booked under.
+async function saveClientName(input) {
+  const id     = input.dataset.clientId;
+  const client = dash.clients.find(c => String(c.id) === String(id));
+  if (!client || !dash.clientsEditing) return;
+
+  // Blur and the flush in setClientsEditing can both land on the same box; the
+  // second one must not fire a duplicate write or a duplicate redraw.
+  if (input.dataset.saving === '1') return;
+
+  const prev = client.full_name || '';
+  const name = input.value.trim();
+  // Nothing worth a round trip: an emptied box, or the same name back again
+  // (assigning it also tidies away any stray spaces she typed).
+  if (!name || name === prev) { input.value = prev; return; }
+
+  input.dataset.saving = '1';
+  input.disabled = true;
+  const { error } = await MoriyaAuth.sb
+    .from('profiles').update({ full_name: name }).eq('id', id);
+  input.disabled = false;
+  delete input.dataset.saving;
+
+  if (error) {
+    // Put the stored name back, so the table never shows a rename that isn't in
+    // the database.
+    input.value = prev;
+    flashClientName(input, 'is-error');
+    alert('שגיאה בשמירת השם: ' + error.message);
+    return;
+  }
+
+  client.full_name = name;
+
+  // The row can be redrawn mid-save — leaving the box for the search field saves
+  // it and then re-renders the table on the very next keystroke, while this call
+  // is still in flight. That render drew the old name, so redraw it now that the
+  // new one is stored; the box she typed in is gone, so there is nothing to flash.
+  if (!input.isConnected) { renderClients(); return; }
+
+  // Otherwise the local copy above is enough: re-rendering here would tear the
+  // box out from under her while she is still working down the list.
+  input.value = name;
+  flashClientName(input, 'is-saved');
+}
+
+// Briefly tint a name box green (saved) or red (failed). Any previous flash is
+// cleared first so quick successive edits don't leave a stale colour behind.
+const nameFlashTimers = new Map();
+function flashClientName(input, cls) {
+  const id = input.dataset.clientId;
+  clearTimeout(nameFlashTimers.get(id));
+  input.classList.remove('is-saved', 'is-error');
+  input.classList.add(cls);
+  nameFlashTimers.set(id, setTimeout(() => input.classList.remove(cls), 1500));
 }
 
 // Grant or revoke a client's access to the feet gel-polish treatment. Every
@@ -1284,10 +1369,33 @@ function wireClientsControls() {
     if (btn) { e.stopPropagation(); deleteClient(btn); }
   });
 
+  // Renaming a client. The text box only exists in edit mode. Leaving it saves,
+  // and so does Enter (by leaving it); Escape restores the stored name first, so
+  // the save that follows finds nothing changed and does nothing.
+  tbody.addEventListener('focusout', e => {
+    const input = e.target.closest('.cl-name-input');
+    if (input) saveClientName(input);
+  });
+  tbody.addEventListener('keydown', e => {
+    const input = e.target.closest('.cl-name-input');
+    if (!input) return;
+    if (e.key === 'Enter') { e.preventDefault(); input.blur(); }
+    if (e.key === 'Escape') {
+      // Swallowed, so abandoning an edit doesn't also close the ⋮ menu.
+      e.stopPropagation();
+      const client = dash.clients.find(c => String(c.id) === String(input.dataset.clientId));
+      input.value = (client && client.full_name) || '';
+      input.blur();
+    }
+  });
+
   // The client's name is the handle for the details card — tapped on a phone,
   // hovered on a desktop. The rest of the row is inert, so reading the table (or
   // reaching the permission toggle at its end) never pops the chart open unasked.
-  const nameCellOf = e => e.target.closest('.cl-name');
+  // While editing, the cell holds a text box instead and stops being a handle
+  // altogether — on a phone the card opens as a modal, which would land on top
+  // of the very name she is trying to type.
+  const nameCellOf = e => (dash.clientsEditing ? null : e.target.closest('.cl-name'));
 
   // Tap/click opens on every device (the only trigger on touch).
   tbody.addEventListener('click', e => {

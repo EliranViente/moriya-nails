@@ -1092,8 +1092,9 @@ function renderOrderSummary() {
   `;
 }
 
-// Prefill name & phone from the signed-in client. The name starts as the one she
-// last booked with and falls back to her Google name on a first booking —
+// Prefill name & phone from the signed-in client. The name starts as the one on
+// her profile — whichever she last booked with, or the one Moriya set for her in
+// the dashboard — and falls back to her Google name only on a first booking;
 // displayName() already resolves that order. She can edit it freely, and
 // whatever she submits is written back to her profile for next time.
 function prefillUserDetails() {
