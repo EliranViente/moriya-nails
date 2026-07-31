@@ -514,13 +514,61 @@ function recalculate() {
 // The current booking step (1–3); used to decide when the summary should show.
 let currentBookingStep = 1;
 
-function summaryTreatmentsLabel() {
-  const parts = [];
-  if (state.baseIncluded) parts.push(state.baseName);
-  state.addons.forEach(a => parts.push(a.name));
-  if (!parts.length) return '';
-  return parts.length <= 2 ? parts.join(' + ') : `${parts[0]} +${parts.length - 1} תוספות`;
+// Is the full treatment list open under the summary bar? Kept here so it stays
+// open while the client carries on changing her selection.
+let summaryExtrasOpen = false;
+
+// Everything the appointment is made of, as services – the treatment line and
+// the list it opens are both built from this.
+function summaryTreatmentItems() {
+  if (editingAppointment) return [...rescheduleBase.services, ...rescheduleExtras];
+  const items = state.baseIncluded
+    ? [{ name: state.baseName, time: state.baseTime, price: state.basePrice }]
+    : [];
+  return items.concat(state.addons);
 }
+
+// The treatment line: everything spelled out while there is little of it, and
+// otherwise the first treatment plus a count the client can open to see the rest.
+function renderSummaryTreatments() {
+  const valueEl  = document.getElementById('bs-treatments');
+  const extrasEl = document.getElementById('bs-extras');
+  if (!valueEl) return;
+
+  const items = summaryTreatmentItems();
+  if (!items.length) {
+    valueEl.textContent = "מניקור לק ג'ל";
+    if (extrasEl) extrasEl.style.display = 'none';
+    return;
+  }
+
+  const spelledOut = items.length <= 2;
+  if (spelledOut) {
+    valueEl.textContent = items.map(s => s.name).join(' + ');
+    summaryExtrasOpen = false;
+  } else {
+    valueEl.innerHTML = `${items[0].name} <button type="button" class="bs-more"`
+      + ` aria-expanded="${summaryExtrasOpen}">+${items.length - 1} תוספות</button>`;
+  }
+
+  if (!extrasEl) return;
+  extrasEl.style.display = !spelledOut && summaryExtrasOpen ? 'flex' : 'none';
+  extrasEl.innerHTML = items.slice(1).map(s => {
+    const nums = [
+      s.time  ? `+${s.time} דק'` : '',
+      s.priceLabel || (s.price ? `+${s.price} ₪` : '')
+    ].filter(Boolean).join(' · ');
+    return `<span class="bs-extra"><span class="bs-extra-name">${s.name}</span>`
+      + (nums ? `<span class="bs-extra-nums">${nums}</span>` : '') + '</span>';
+  }).join('');
+}
+
+// The count opens and closes the list.
+document.getElementById('bs-treatments')?.addEventListener('click', e => {
+  if (!e.target.closest('.bs-more')) return;
+  summaryExtrasOpen = !summaryExtrasOpen;
+  renderSummaryTreatments();
+});
 
 // Format a minutes total as a friendly Hebrew duration (e.g. "שעה ורבע", "75 דק'").
 function formatDuration(min) {
@@ -538,17 +586,10 @@ function updateBookingSummary() {
   const bar = document.getElementById('booking-summary');
   if (!bar) return;
 
-  let treatments, duration, price;
+  let duration, price;
   if (editingAppointment) {
     // Rescheduling an existing appointment – reflect the locked base plus the
     // add-ons currently selected (which the client can add to or remove).
-    const svc = [
-      ...rescheduleBase.services.map(s => s.name),
-      ...rescheduleExtras.map(e => e.name)
-    ];
-    treatments = svc.length
-      ? (svc.length <= 2 ? svc.join(' + ') : `${svc[0]} +${svc.length - 1} תוספות`)
-      : "מניקור לק ג'ל";
     const newDuration = rescheduleBase.time  + extrasTotalTime();
     const newPrice    = rescheduleBase.price + extrasTotalPrice();
     const hasInPersonPrice = rescheduleExtras.some(e => e.priceLabel);
@@ -561,16 +602,15 @@ function updateBookingSummary() {
     const isDefaultSelection = state.baseIncluded && state.addons.length === 0;
     if (currentBookingStep === 1 && isDefaultSelection) { bar.style.display = 'none'; return; }
 
-    treatments = summaryTreatmentsLabel() || '—';
-    duration   = formatDuration(state.totalTime);
+    duration = formatDuration(state.totalTime);
     const hasInPersonPrice = state.addons.some(a => a.priceLabel);
     price = state.totalPrice + ' ₪' + (hasInPersonPrice ? ' + עיצוב אישי' : '');
   }
 
   bar.style.display = 'flex';
-  document.getElementById('bs-treatments').textContent = treatments;
-  document.getElementById('bs-duration').textContent   = duration;
-  document.getElementById('bs-price').textContent      = price;
+  renderSummaryTreatments();
+  document.getElementById('bs-duration').textContent = duration;
+  document.getElementById('bs-price').textContent    = price;
 
   const whenWrap = document.getElementById('bs-when-wrap');
   const whenEl   = document.getElementById('bs-when');
@@ -1590,11 +1630,14 @@ function buildGoogleCalendarUrl(treatments, durationMinutes, priceText) {
   const fmt = dt => `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}`
                   + `T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
 
+  // Same wording as Moriya's own event, so both calendars read alike – picked
+  // decorations gathered under one "קישוט – " instead of repeating it per style.
+  const list = joinServiceNames(treatments);
   const params = new URLSearchParams({
     action:   'TEMPLATE',
-    text:     `תור אצל מוריה – ${treatments.join(', ')}`,
+    text:     `תור אצל מוריה – ${list}`,
     dates:    `${fmt(start)}/${fmt(end)}`,
-    details:  `הטיפול: ${treatments.join(', ')}\nמחיר: ${priceText}`,
+    details:  `הטיפול: ${list}\nמחיר: ${priceText}`,
     location: 'יעקב בר סימנטוב 18',
     ctz:      'Asia/Jerusalem'
   });

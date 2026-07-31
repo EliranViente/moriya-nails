@@ -278,6 +278,8 @@
             <span class="bs-label">מועד</span>
             <span class="bs-value" id="bs-when">—</span>
           </div>
+          <!-- Everything behind the "+N תוספות" count, opened by tapping it -->
+          <div class="bs-extras" id="bs-extras" style="display:none;"></div>
         </div>
 
         <!-- ── STEP 1: Treatment Selection ── -->
@@ -951,6 +953,7 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="shared/calendar-text.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/app.js"></script>

@@ -600,6 +600,46 @@ ul { list-style: none; }
 .bs-price .bs-value { color: var(--gold-dark); }
 .bs-when .bs-value { color: var(--gray-700); }
 
+/* The "+N תוספות" count, and the list of add-ons it opens below the bar */
+.bs-more {
+  font-family: inherit;
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--pink-500);
+  background: var(--pink-50);
+  border: 1px solid var(--pink-200);
+  border-radius: 999px;
+  padding: 1px 10px;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition);
+}
+.bs-more:hover { background: var(--pink-100); border-color: var(--pink-300); }
+.bs-more[aria-expanded="true"] {
+  background: var(--pink-100);
+  border-color: var(--pink-300);
+}
+.bs-extras {
+  flex-basis: 100%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  margin-top: 14px;
+  padding-top: 14px;
+  border-top: 1px solid var(--pink-100);
+}
+.bs-extra {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  background: var(--white);
+  border: 1px solid var(--pink-100);
+  border-radius: 999px;
+  padding: 4px 13px;
+}
+.bs-extra-name { font-size: 0.82rem; font-weight: 600; color: var(--gray-700); }
+.bs-extra-nums { font-size: 0.76rem; color: var(--pink-500); white-space: nowrap; }
+
 .step-item {
   display: flex;
   flex-direction: column;
