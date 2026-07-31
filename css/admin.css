@@ -145,7 +145,8 @@
 /* RTL order of tracks (right → left): editor · calendar · day-hours. */
 .avail-layout {
   display: grid;
-  grid-template-columns: 320px minmax(380px, 1fr) 300px;
+  /* The day view carries the most content, so it gets the room to grow. */
+  grid-template-columns: 300px minmax(340px, 0.9fr) minmax(380px, 1.1fr);
   gap: 22px; align-items: start;
 }
 .avail-editor { border: 1px solid var(--pink-100); border-radius: var(--radius-md); padding: 20px; background: var(--gray-50); }
@@ -306,13 +307,18 @@
 .avail-feedback.err { color: #c0392b; }
 
 .avail-day h3 { font-size: 1.05rem; font-weight: 700; color: var(--gray-800); }
-.avail-windows { display: flex; flex-direction: column; gap: 12px; }
+.avail-windows { display: flex; flex-direction: column; gap: 10px; }
 .avail-win {
-  display: flex; align-items: center; justify-content: space-between; gap: 14px;
-  border: 1px solid var(--pink-100); border-radius: var(--radius-md); padding: 14px 16px;
+  display: flex; flex-direction: column; gap: 4px;
+  border: 1px solid var(--pink-100); border-radius: var(--radius-md); padding: 12px 14px;
   background: var(--white);
 }
 .avail-win.block { background: #fff7f5; border-color: #ffd9cf; }
+/* The badge sits at the start of the line, the real working hours at its end. */
+.win-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.win-head strong { font-size: 1.15rem; color: var(--gray-800); font-variant-numeric: tabular-nums; }
+.win-none { font-size: 0.92rem !important; font-weight: 600; color: var(--gray-400); }
+.win-chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
 .win-info { display: flex; flex-direction: column; gap: 5px; }
 .win-info strong { font-size: 1.05rem; color: var(--gray-800); }
 .win-badge { font-size: 0.72rem; font-weight: 700; padding: 2px 9px; border-radius: 20px; width: max-content; }
@@ -326,58 +332,60 @@
   color: var(--gray-700); font-weight: 600; margin-bottom: 12px;
 }
 .win-del {
-  font-family: var(--font); cursor: pointer; font-size: 0.8rem; font-weight: 600;
+  font-family: var(--font); cursor: pointer; font-size: 0.76rem; font-weight: 600;
   color: var(--gray-600); background: transparent; border: 1.5px solid var(--pink-100);
-  border-radius: var(--radius-xl); padding: 6px 14px; transition: all var(--transition); flex-shrink: 0;
+  border-radius: var(--radius-xl); padding: 4px 11px; transition: all var(--transition); flex-shrink: 0;
 }
 .win-del:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
 .avail-empty { color: var(--gray-400); font-size: 0.9rem; line-height: 1.6; }
 
 /* ── The selected day, hour by hour ── */
-.day-timeline { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+.day-timeline { display: flex; flex-direction: column; gap: 6px; margin-top: 2px; }
 .dt-head {
   font-size: 0.78rem; font-weight: 700; color: var(--gray-600);
-  letter-spacing: 0.04em; margin: 6px 0 2px;
+  letter-spacing: 0.04em; margin: 4px 0 0;
 }
+/* Hours, label and buttons share one line; a long detail wraps under them. */
 .dt-row {
-  display: flex; align-items: center; gap: 12px;
+  display: flex; align-items: center; flex-wrap: wrap; gap: 4px 10px;
   border: 1px solid var(--pink-100); border-radius: var(--radius-md);
-  padding: 10px 12px; background: var(--white);
+  padding: 8px 11px; background: var(--white);
 }
 .dt-row.is-free  { background: var(--pink-50); border-style: dashed; }
-.dt-row.is-break { background: #fff7f5; border-color: #ffd9cf; padding: 7px 12px; }
-.dt-row.is-gap   { background: var(--gray-50); border-style: dashed; padding: 6px 12px; }
+.dt-row.is-break { background: #fff7f5; border-color: #ffd9cf; padding: 6px 11px; }
+.dt-row.is-gap   { background: var(--gray-50); border-style: dashed; padding: 5px 11px; }
 .dt-row.is-past  { opacity: 0.5; }
-/* Reserve the actions' width even when a row has none, so every start time in
-   the day lines up in one column. */
-.dt-actions { display: flex; gap: 6px; flex-shrink: 0; min-width: 74px; }
 .dt-time {
-  font-weight: 700; font-size: 0.92rem; color: var(--gray-800);
+  font-weight: 700; font-size: 0.9rem; color: var(--gray-800);
   flex-shrink: 0; font-variant-numeric: tabular-nums;
 }
-.dt-row.is-break .dt-time, .dt-row.is-gap .dt-time { font-size: 0.85rem; font-weight: 600; }
-.dt-main { display: flex; flex-direction: column; gap: 2px; min-width: 0; flex: 1; }
-.dt-who { font-size: 0.88rem; color: var(--gray-800); font-weight: 600; }
-.dt-row.is-gap .dt-who { font-size: 0.78rem; color: var(--gray-600); font-weight: 500; }
-.dt-who.is-open { color: var(--gray-600); font-weight: 500; font-style: italic; }
-.dt-meta { font-size: 0.76rem; color: var(--gray-600); }
+.dt-row.is-break .dt-time, .dt-row.is-gap .dt-time { font-size: 0.82rem; font-weight: 600; }
+/* Takes the slack between the hours and the buttons, and clips rather than
+   pushing the buttons off the row. */
+.dt-label {
+  flex: 1 1 auto; min-width: 0; font-size: 0.85rem; color: var(--gray-700);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.dt-row.is-break .dt-label, .dt-row.is-gap .dt-label { font-size: 0.78rem; color: var(--gray-600); }
+.dt-who { font-weight: 700; color: var(--gray-800); }
+.is-open { color: var(--gray-600); font-style: italic; }
+.dt-meta { flex: 1 0 100%; font-size: 0.75rem; color: var(--gray-600); line-height: 1.45; }
+.dt-actions { display: flex; gap: 5px; flex-shrink: 0; margin-inline-start: auto; }
 .dt-flag {
-  font-size: 0.68rem; font-weight: 700; color: #b9770e; background: #fff3e0;
-  border-radius: 20px; padding: 2px 8px; margin-inline-start: 6px;
+  font-size: 0.66rem; font-weight: 700; color: #b9770e; background: #fff3e0;
+  border-radius: 20px; padding: 1px 7px; margin-inline-start: 5px;
 }
 .dt-btn {
-  font-family: var(--font); cursor: pointer; font-weight: 600; font-size: 0.76rem;
+  font-family: var(--font); cursor: pointer; font-weight: 600; font-size: 0.75rem;
   border: 1.5px solid var(--pink-100); background: var(--white);
-  border-radius: var(--radius-xl); padding: 4px 10px; color: var(--gray-600);
+  border-radius: var(--radius-xl); padding: 3px 10px; color: var(--gray-600);
   transition: all var(--transition); flex-shrink: 0;
 }
-.dt-btn.del { padding: 4px 9px; line-height: 1; font-size: 0.85rem; }
+.dt-btn.del { padding: 3px 8px; line-height: 1.2; font-size: 0.82rem; }
 .dt-btn.del:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
 .dt-btn.move { color: var(--pink-500); background: var(--pink-50); }
 .dt-btn.move:hover { background: var(--pink-100); }
-.dt-btn.notify {
-  color: #0a8a4a; background: #e8f8ef; border-color: #bfe9d2; margin-inline-start: auto;
-}
+.dt-btn.notify { color: #0a8a4a; background: #e8f8ef; border-color: #bfe9d2; }
 .dt-btn.notify:hover { background: #d6f2e2; border-color: #9fe0bd; }
 
 /* ── Appointment cards ── */

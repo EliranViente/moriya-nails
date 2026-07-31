@@ -812,27 +812,36 @@ async function loadDayWindows(date) {
     return;
   }
 
-  list.innerHTML = note + renderWindowRows(date, wins) + renderDayTimeline(date, wins);
+  const items = buildDayItems(date);
+  list.innerHTML = note + renderDaySummary(date, wins, items) + renderDayTimeline(date, items, wins);
   delDayBtn.style.display = wins.length ? '' : 'none';
   delDayBtn.onclick = () => deleteDay(date);
   wireDayActions(list, date);
 }
 
-// The day's working hours, as a headline above the hour-by-hour view.
-function renderWindowRows(date, wins) {
-  const usingDefault = !dashDay.open.length;
-  return wins.map(w => {
-    const count    = sliceSlots(w.start, w.end).length;
-    const defLabel = usingDefault ? ' <span class="win-default">ברירת מחדל (שישי)</span>' : '';
-    const delBtn   = w.id ? `<button class="win-del" data-id="${w.id}">מחיקה</button>` : '';
-    return `<div class="avail-win open">
-      <div class="win-info">
-        <span class="win-badge open">🟢 עבודה</span><strong dir="ltr">${fromMin(w.start)}–${fromMin(w.end)}</strong>${defLabel}
-        <span class="win-slots">עד ${count} תורים (לפי 90 דק')</span>
-      </div>
-      ${delBtn}
-    </div>`;
-  }).join('');
+// The headline: the hours Moriya is actually booked for, and what's still open.
+function renderDaySummary(date, wins, items) {
+  if (!wins.length) return '';   // a day with breaks but no working hours
+  const booked = items.filter(i => i.kind === 'appt');
+  const free   = items.filter(i => i.kind === 'free' && i.full && !isPastMin(date, i.start));
+
+  const hours = booked.length
+    ? `<strong dir="ltr">${fromMin(Math.min(...booked.map(b => b.start)))}–${fromMin(Math.max(...booked.map(b => b.end)))}</strong>`
+    : '<strong class="win-none">טרם נקבעו תורים</strong>';
+  const left = free.length === 1 ? 'נותר תור פנוי אחד'
+             : free.length ? `נותרו ${free.length} תורים פנויים`
+             : 'לא נותרו תורים פנויים';
+
+  // Windows Moriya added herself can be removed one by one; the Friday default
+  // has no row of its own, and goes through "בטלי יום".
+  const chips = wins.filter(w => w.id).map(w =>
+    `<button class="win-del" data-id="${w.id}"><span dir="ltr">${fromMin(w.start)}–${fromMin(w.end)}</span> ✕</button>`).join('');
+
+  return `<div class="avail-win open">
+    <div class="win-head"><span class="win-badge open">🟢 עבודה</span>${hours}</div>
+    <span class="win-slots">${left}</span>
+    ${chips ? `<div class="win-chips">${chips}</div>` : ''}
+  </div>`;
 }
 
 // ─── The day, hour by hour ────────────────────────────────────────────────────
@@ -849,17 +858,20 @@ function isPastMin(date, minutes) {
   return minutes <= now.getHours() * 60 + now.getMinutes();
 }
 
-function renderDayTimeline(date, wins) {
-  // Cancelled appointments free their time up, so they leave no row behind.
+// The selected day as an ordered list of stretches. Cancelled appointments free
+// their time up, so they leave no row behind.
+function buildDayItems(date) {
   const appts = dash.appointments
     .filter(a => a.date === date && a.status !== 'cancelled')
     .map(a => {
       const start = toMin((a.start_time || '00:00').slice(0, 5));
       return { key: `appt-${a.id}`, kind: 'appt', start, end: start + (Number(a.duration_min) || 0), appt: a };
     });
+  return MoriyaSchedule.dayTimeline(date, dashDay, appts);
+}
 
-  const rows = MoriyaSchedule.dayTimeline(date, dashDay, appts)
-    .map(item => timelineRow(date, item, wins)).filter(Boolean);
+function renderDayTimeline(date, items, wins) {
+  const rows = items.map(item => timelineRow(date, item, wins)).filter(Boolean);
 
   if (!rows.length) return '<p class="avail-empty">אין תורים או הפסקות ביום זה.</p>';
   return `<div class="day-timeline">
@@ -868,82 +880,77 @@ function renderDayTimeline(date, wins) {
   </div>`;
 }
 
-function timelineRow(date, item, wins) {
-  const range = `<span class="dt-time" dir="ltr">${fromMin(item.start)}–${fromMin(item.end)}</span>`;
-  const past  = isPastMin(date, item.end);
+// Every row is built the same way: the hours, a short label beside them, the
+// buttons pinned to the far edge, and any long detail flowing onto its own line.
+function dtRow(cls, item, label, actions, detail) {
+  return `<div class="dt-row ${cls}">
+    <span class="dt-time" dir="ltr">${fromMin(item.start)}–${fromMin(item.end)}</span>
+    <span class="dt-label">${label}</span>
+    <div class="dt-actions">${actions}</div>
+    ${detail ? `<span class="dt-meta">${detail}</span>` : ''}
+  </div>`;
+}
 
-  if (item.kind === 'appt') return apptTimelineRow(item, range);
+function timelineRow(date, item, wins) {
+  const past = isPastMin(date, item.end);
+
+  if (item.kind === 'appt') return apptTimelineRow(item);
 
   if (item.kind === 'free') {
     // Leftovers too short for a standard appointment are shown for context but
     // aren't slots anyone can take, so they carry no actions.
     if (!item.full) {
       const gap = item.end - item.start;
-      if (gap < 15) return '';
-      return `<div class="dt-row is-gap">
-        <div class="dt-actions"></div>${range}
-        <div class="dt-main"><span class="dt-who">רווח ${gap} דק׳ · לטיפול קצר</span></div>
-      </div>`;
+      return gap < 15 ? '' : dtRow('is-gap', item, `רווח ${gap} דק׳ · לטיפול קצר`, '');
     }
     const win     = item.win || wins[0] || { end: item.end };
     const actions = past ? '' : `
-      <button class="dt-btn del" title="ביטול התור — השעה לא תוצע יותר ללקוחות" aria-label="ביטול התור"
-              data-act="free-block" data-start="${item.start}" data-end="${item.end}">✕</button>
       <button class="dt-btn move" data-act="free-move"
-              data-start="${item.start}" data-end="${item.end}" data-win-end="${win.end}">הזזה</button>`;
-    return `<div class="dt-row is-free${past ? ' is-past' : ''}">
-      <div class="dt-actions">${actions}</div>${range}
-      <div class="dt-main"><span class="dt-who is-open">לא הוזמן עדיין</span></div>
-    </div>`;
+              data-start="${item.start}" data-end="${item.end}" data-win-end="${win.end}">הזזה</button>
+      <button class="dt-btn del" title="ביטול התור — השעה לא תוצע יותר ללקוחות" aria-label="ביטול התור"
+              data-act="free-block" data-start="${item.start}" data-end="${item.end}">✕</button>`;
+    return dtRow(`is-free${past ? ' is-past' : ''}`, item,
+      '<span class="is-open">לא הוזמן עדיין</span>', actions);
   }
 
-  return breakTimelineRow(item, range, past);
+  return breakTimelineRow(item, past);
 }
 
 // A booked appointment is locked once it is over — done is done.
-function apptTimelineRow(item, range) {
+function apptTimelineRow(item) {
   const a       = item.appt;
   const svc     = (a.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
   const locked  = isPastAppt(a);
   const outside = item.outside ? '<span class="dt-flag">מחוץ לשעות העבודה</span>' : '';
   // The notice button appears only for an appointment Moriya actually moved.
   const notify  = movedAppts.has(String(a.id)) && a.client_phone && !locked
-    ? `<button class="dt-btn notify" data-act="appt-notify" data-id="${a.id}">💬 עדכון</button>` : '';
-  const actions = locked ? '' : `
+    ? `<button class="dt-btn notify" data-act="appt-notify" data-id="${a.id}">💬</button>` : '';
+  const actions = locked ? '' : `${notify}
+    <button class="dt-btn move" data-act="appt-move" data-id="${a.id}">הזזה</button>
     <button class="dt-btn del" title="ביטול התור" aria-label="ביטול התור של ${escAttr(a.client_name)}"
-            data-act="appt-cancel" data-id="${a.id}">✕</button>
-    <button class="dt-btn move" data-act="appt-move" data-id="${a.id}">הזזה</button>`;
+            data-act="appt-cancel" data-id="${a.id}">✕</button>`;
 
-  return `<div class="dt-row is-appt${locked ? ' is-past' : ''}">
-    <div class="dt-actions">${actions}</div>${range}
-    <div class="dt-main">
-      <span class="dt-who">👤 ${escAttr(a.client_name)}${outside}</span>
-      <span class="dt-meta">${escAttr(svc)} · ${a.duration_min} דק׳ · ${ils(Number(a.total_price || 0))}</span>
-    </div>
-    ${notify}
-  </div>`;
+  return dtRow(`is-appt${locked ? ' is-past' : ''}`, item,
+    `<span class="dt-who">${escAttr(a.client_name)}</span>${outside}`, actions,
+    `${escAttr(svc)} · ${a.duration_min} דק׳ · ${ils(Number(a.total_price || 0))}`);
 }
 
-function breakTimelineRow(item, range, past) {
+function breakTimelineRow(item, past) {
   const isBig   = item.kind === 'big';
   const isFloat = item.kind === 'float';
-  const label   = isFloat ? '☕ הפסקה צפה' : '⛔ הפסקה';
-  const sub     = isBig   ? (item.bitten ? 'קבועה · נגס בה התור הקודם' : 'קבועה')
-                : isFloat ? `מ-${fromMin(item.ref.notBefore)} · נדחית עם התורים`
-                : 'חסימה';
+  const label   = isFloat ? `☕ הפסקה צפה · מ-${fromMin(item.ref.notBefore)}`
+                : isBig   ? (item.bitten ? '⛔ הפסקה קבועה · ננגסה' : '⛔ הפסקה קבועה')
+                : '⛔ חסימה';
   // A break the day inherits from the Friday default has no row of its own yet;
   // editing or removing one writes this date's own rows (see materializeBreaks).
   const id      = (item.ref && item.ref.id) || item.id || '';
   const actions = past ? '' : `
-    <button class="dt-btn del" title="ביטול ההפסקה" aria-label="ביטול ההפסקה"
-            data-act="brk-del" data-brk="${item.kind}" data-id="${id}">✕</button>
     <button class="dt-btn move" data-act="brk-edit" data-brk="${item.kind}" data-id="${id}"
-            data-start="${item.start}" data-end="${item.end}">שינוי</button>`;
+            data-start="${item.start}" data-end="${item.end}">שינוי</button>
+    <button class="dt-btn del" title="ביטול ההפסקה" aria-label="ביטול ההפסקה"
+            data-act="brk-del" data-brk="${item.kind}" data-id="${id}">✕</button>`;
 
-  return `<div class="dt-row is-break${past ? ' is-past' : ''}">
-    <div class="dt-actions">${actions}</div>${range}
-    <div class="dt-main"><span class="dt-who">${label}</span><span class="dt-meta">${sub}</span></div>
-  </div>`;
+  return dtRow(`is-break${past ? ' is-past' : ''}`, item, label, actions);
 }
 
 function wireDayActions(list, date) {
