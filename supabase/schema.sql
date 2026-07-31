@@ -118,19 +118,30 @@ where u.id = p.id;
 
 -- ============================================================
 --  2) AVAILABILITY – working windows & breaks (admin-managed)
---     Fridays are work days by default (09:00–17:00) with no row needed.
---     kind='open'   e.g. date=2026-06-26, 09:00–17:00 → sliced into 90-min slots
---     kind='block'  e.g. date=2026-06-26, 12:00–13:00 → a break inside the day
---     kind='closed' e.g. date=2026-06-26                → turns off a default day
+--     Fridays are work days by default (09:00–18:00) with no row needed, and
+--     carry the default breaks (fixed 10:30–11:15 + a floating 15-min rest from
+--     14:00). Rows below override that, per date. See js/schedule.js.
+--     kind='open'      e.g. date=2026-06-26, 09:00–17:00 → sliced into 90-min slots
+--     kind='block'     e.g. date=2026-06-26, 12:00–13:00 → a break inside the day
+--     kind='closed'    e.g. date=2026-06-26              → turns off a default day
+--     kind='bigbreak'  e.g. date=2026-06-26, 10:30–11:15 → that date's fixed break
+--     kind='float'     e.g. date=2026-06-26, 14:00–14:15 → floating break: start
+--                                                          = "not before", length
+--                                                          = the row's span
+--     kind='nodefault' e.g. date=2026-06-26, 00:00–00:00 → this date does not take
+--                                                          the implicit Friday breaks
 -- ============================================================
 create table if not exists public.availability (
   id          uuid primary key default gen_random_uuid(),
   date        date not null,
   start_time  time not null,
   end_time    time not null,
-  -- 'open'   = a working window, sliced into bookable slots for clients
-  -- 'block'  = a break inside the day (not bookable)
-  -- 'closed' = marks a whole day off (used to disable a default Friday)
+  -- 'open'      = a working window, sliced into bookable slots for clients
+  -- 'block'     = a break inside the day (not bookable)
+  -- 'closed'    = marks a whole day off (used to disable a default Friday)
+  -- 'bigbreak'  = the date's fixed, protected break (replaces the Friday default)
+  -- 'float'     = the date's floating break (replaces the Friday default)
+  -- 'nodefault' = marker: don't apply the implicit Friday breaks to this date
   kind        text not null default 'open',
   created_at  timestamptz default now()
 );
