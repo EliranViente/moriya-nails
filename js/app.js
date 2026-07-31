@@ -47,7 +47,8 @@ let editingAppointment = null;
 // An option carrying `priceLabel` is priced in person instead of on the site: its
 // price counts as 0 in the total, and the range shows wherever the total does.
 // `note` is shown while that option is picked; the picker's own `note` covers
-// every option that doesn't bring one.
+// every option that doesn't bring one, unless the option opts out with
+// `sharedNote: false`.
 const ADDON_PICKERS = {
   deco: {
     prefix:     'קישוט',
@@ -56,14 +57,16 @@ const ADDON_PICKERS = {
     editLabel:  'שינוי הקישוטים',
     emptyTime:  "10–15 דק'",
     emptyPrice: '5–40 ₪',
+    // Priced per nail – which is why french and ombre, covering the whole hand
+    // for one price, opt out of it.
     note: {
       emoji: '💗',
       tone:  'pink',
       text:  'הקישוט מתומחר כאחד לכל ציפורן, במידה ותרצי יותר מאחד על כל ציפורן תיתכנה עלויות נוספות במועד התור'
     },
     options: [
-      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',      desc: "אפקט פרנץ' קלאסי ואלגנטי",     time: 15, price: 20 },
-      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה עדין',          desc: 'מעבר אומברה מדורג ורך',         time: 15, price: 20 },
+      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',      desc: "אפקט פרנץ' קלאסי ואלגנטי",     time: 15, price: 20, sharedNote: false },
+      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה עדין',          desc: 'מעבר אומברה מדורג ורך',         time: 15, price: 20, sharedNote: false },
       { id: 'waves',  emoji: '🌊', name: 'ציורי גלים',                desc: 'קווי גלים מצוירים ביד',         time: 15, price: 15 },
       { id: 'pearl',  emoji: '🧚', name: 'אבקת פנינה',                desc: 'ברק פנינה עדין על הציפורן',     time: 15, price: 15 },
       { id: 'stones', emoji: '💎', name: 'אבנים דמוי יהלום מודבקות',  desc: 'אבני חן מודבקות לנצנוץ',        time: 10, price: 10 },
@@ -104,11 +107,12 @@ function pickerServices(key) {
 }
 
 // The notes that apply to a set of chosen options: an option's own note when it
-// brings one, plus the picker's shared note as soon as anything without one is
-// picked.
+// brings one, plus the picker's shared note as soon as something is picked that
+// neither brings a note of its own nor opts out of the shared one.
 function pickerNotes(cfg, opts) {
   const notes = opts.filter(o => o.note).map(o => o.note);
-  if (cfg.note && opts.some(o => !o.note)) notes.unshift(cfg.note);
+  const shared = opts.some(o => !o.note && o.sharedNote !== false);
+  if (cfg.note && shared) notes.unshift(cfg.note);
   return notes;
 }
 
