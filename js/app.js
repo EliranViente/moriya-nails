@@ -57,20 +57,20 @@ const ADDON_PICKERS = {
     editLabel:  'שינוי הקישוטים',
     emptyTime:  "10–15 דק'",
     emptyPrice: '5–40 ₪',
-    // Priced per nail – which is why french and ombre, covering the whole hand
-    // for one price, opt out of it.
+    // Priced per nail – which is why french, ombre and pearl powder, covering the
+    // whole hand for one price, opt out of it.
     note: {
       emoji: '💗',
       tone:  'pink',
       text:  'הקישוט מתומחר כאחד לכל ציפורן, במידה ותרצי יותר מאחד על כל ציפורן תיתכנה עלויות נוספות במועד התור'
     },
     options: [
-      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',      desc: "אפקט פרנץ' קלאסי ואלגנטי",     time: 15, price: 20, sharedNote: false },
-      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה עדין',          desc: 'מעבר אומברה מדורג ורך',         time: 15, price: 20, sharedNote: false },
-      { id: 'waves',  emoji: '🌊', name: 'ציורי גלים',                desc: 'קווי גלים מצוירים ביד',         time: 15, price: 15 },
-      { id: 'pearl',  emoji: '🧚', name: 'אבקת פנינה',                desc: 'ברק פנינה עדין על הציפורן',     time: 15, price: 15 },
-      { id: 'stones', emoji: '💎', name: 'אבנים דמוי יהלום מודבקות',  desc: 'אבני חן מודבקות לנצנוץ',        time: 10, price: 10 },
-      { id: 'custom', emoji: '🎨', name: 'עיצוב אישי',                desc: 'עיצוב משלך – המחיר ייקבע בתור', time: 15, price: 0,
+      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',       time: 15, price: 20, sharedNote: false },
+      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה מדורג ועדין',   time: 15, price: 20, sharedNote: false },
+      { id: 'pearl',  emoji: '🧚', name: 'אבקת פנינה',                time: 15, price: 15, sharedNote: false },
+      { id: 'waves',  emoji: '🌊', name: 'ציורי גלים',                time: 15, price: 15 },
+      { id: 'stones', emoji: '💎', name: 'אבנים דמוי יהלום מודבקות',  time: 10, price: 10 },
+      { id: 'custom', emoji: '🎨', name: 'עיצוב אישי',                time: 15, price: 0,
         priceLabel: '5–40 ₪ (ייקבע בתור)', priceShort: '5–40 ₪',
         note: { emoji: '💡', text: 'המחיר המדויק של הקישוט ייקבע בתור עצמו בהתאם לעיצוב שתבחרי' } },
     ],
@@ -1955,14 +1955,14 @@ function renderRescheduleExtras() {
           <input type="checkbox" class="rx-check" data-id="${x.id}" />
           <span class="rx-box"></span>
           <span class="rx-emoji">${x.emoji}</span>
-          <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc}</span></span>
+          <span class="rx-detail"><span class="rx-name">${x.name}</span>${x.desc ? `<span class="rx-desc">${x.desc}</span>` : ''}</span>
           <span class="rx-nums"><span class="rx-time">+${x.time} דק'</span><span class="rx-price">${priceText}</span></span>
         </label>`;
     }
     return `
       <div class="rx-row" data-id="${x.id}">
         <span class="rx-emoji">${x.emoji}</span>
-        <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc}</span></span>
+        <span class="rx-detail"><span class="rx-name">${x.name}</span>${x.desc ? `<span class="rx-desc">${x.desc}</span>` : ''}</span>
         <span class="rx-qty">
           <button type="button" class="rx-qty-btn minus" data-id="${x.id}">−</button>
           <input type="number" class="rx-qty-input" data-id="${x.id}" value="0" min="0" max="10" />
