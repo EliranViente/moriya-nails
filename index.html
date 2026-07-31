@@ -278,6 +278,8 @@
             <span class="bs-label">מועד</span>
             <span class="bs-value" id="bs-when">—</span>
           </div>
+          <!-- Everything behind the "+N תוספות" count, opened by tapping it -->
+          <div class="bs-extras" id="bs-extras" style="display:none;"></div>
         </div>
 
         <!-- ── STEP 1: Treatment Selection ── -->
@@ -348,42 +350,29 @@
               </label>
             </div>
 
-            <!-- French / Ombre -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
-              <label class="addon-checkbox-label">
-                <input type="checkbox" class="addon-check" id="chk-french" />
-                <div class="custom-check"></div>
-                <span class="a-emoji">🌸</span>
-                <div class="addon-detail">
-                  <span class="a-name">פרנץ׳ קלאסי ואלגנטי / מעבר אומברה עדין</span>
-                  <span class="a-desc">אפקט פרנץ' קלאסי ואלגנטי, או מעבר אומברה מדורג</span>
-                </div>
-                <div class="addon-nums">
-                  <span class="a-time">+15 דק'</span>
-                  <span class="a-price">+20 ₪</span>
-                </div>
-              </label>
-            </div>
-
-            <!-- Decoration -->
-            <div class="addon-row decoration-row" data-time="10" data-type="checkbox" data-requires-base="true">
+            <!-- Decoration – the styles themselves (french and ombre among them)
+                 are chosen in the add-on picker modal; ADDON_PICKERS.deco holds
+                 their names, times and prices, and fills in the row's numbers,
+                 chosen list and notes. -->
+            <div class="addon-row" data-type="picker" data-picker="deco" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-deco" />
                 <div class="custom-check"></div>
                 <span class="a-emoji">🎨</span>
                 <div class="addon-detail">
                   <span class="a-name">קישוט</span>
-                  <span class="a-desc">מעיצובים מינימליסטים ונקייים ועד סגנונות עשירים</span>
+                  <span class="a-desc">מעיצובים פופולריים, פרנץ' קלאסי ואומברה מדורג ועד סגנונות עשירים</span>
                 </div>
                 <div class="addon-nums">
-                  <span class="a-time">+10 דק'</span>
+                  <span class="a-time">10–15 דק'</span>
                   <span class="a-price">5–40 ₪</span>
                 </div>
               </label>
-              <div class="deco-note-box" id="deco-note-box" style="display:none;">
-                <span class="deco-note-icon">💡</span>
-                <p>המחיר המדויק של הקישוט (5–40 ₪) ייקבע בתור עצמו בהתאם לעיצוב שתבחרי</p>
+              <div class="picker-chosen" style="display:none;">
+                <ul class="picker-chosen-list"></ul>
+                <button type="button" class="picker-edit">שינוי הקישוטים</button>
               </div>
+              <div class="picker-row-notes"></div>
             </div>
 
             <!-- Polish removal + reshape (standalone quick fix) -->
@@ -488,7 +477,7 @@
               <strong id="sum-price">140 ₪</strong>
             </div>
             <p class="summary-deco-note" id="summary-deco-note" style="display:none;">
-              ✦ בנוסף, מחיר הקישוט (5–40 ₪) ייקבע בתור לפי העיצוב
+              ✦ בנוסף, מחיר העיצוב האישי (5–40 ₪) ייקבע בתור לפי העיצוב
             </p>
           </div>
 
@@ -947,7 +936,24 @@
     </div>
   </div>
 
+  <!-- ──────────────── ADD-ON OPTION PICKER MODAL ────────────────
+       One modal for every add-on whose sub-options are chosen on a screen of
+       their own (the decoration styles today). Everything inside is rendered
+       from the ADDON_PICKERS entry of whichever add-on was ticked. -->
+  <div class="modal-overlay" id="picker-modal" style="display:none;">
+    <div class="modal-card picker-card">
+      <button class="modal-close" id="picker-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title" id="picker-title"></h3>
+      <p class="modal-sub" id="picker-sub"></p>
+      <div class="picker-total" id="picker-total"></div>
+      <div class="picker-list" id="picker-list"></div>
+      <div class="picker-notes" id="picker-notes"></div>
+      <button type="button" class="btn-next" id="picker-confirm" disabled>הוסיפי לתור ✓</button>
+    </div>
+  </div>
+
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="shared/calendar-text.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/schedule.js"></script>

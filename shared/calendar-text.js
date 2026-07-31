@@ -1,7 +1,9 @@
 /**
- * Shared formatting for the treatment list on Moriya's Google Calendar events.
- * Required by /api/book, /api/manage-booking and the standalone dev server so a
- * booking and a later reschedule always read identically on the calendar.
+ * Shared formatting for the treatment list on a Google Calendar event – Moriya's
+ * and, through the "add to my calendar" link, the client's too. Required by
+ * /api/book, /api/manage-booking, the standalone dev server and the booking page
+ * itself, so a booking, a later reschedule and the client's own copy always read
+ * identically.
  *
  * A service marked `separate: true` is not part of the manicure — it is its own
  * treatment booked alongside it (currently the gel polish on the toes). Those
@@ -11,6 +13,31 @@
  */
 
 const SEPARATE_PREFIX = 'בנוסף,';
+
+// Options chosen from one add-on picker come through as services sharing a
+// prefix ("קישוט – פרנץ׳ קלאסי ואלגנטי", "קישוט – מעבר אומברה עדין"). Saying the
+// prefix once reads far better on a calendar, so they are gathered back into
+// "קישוט – פרנץ׳ קלאסי ואלגנטי, מעבר אומברה עדין".
+const PREFIX_SEP = ' – ';
+
+// Join services into one line, with same-prefix ones gathered. Takes services or
+// plain names, and keeps the order they were booked in.
+function joinServiceNames(services) {
+  const groups = [];   // { prefix, parts } in first-seen order
+  (services || []).forEach(s => {
+    const name = (typeof s === 'string' ? s : s && s.name) || '';
+    if (!name) return;
+    const at     = name.indexOf(PREFIX_SEP);
+    const prefix = at > 0 ? name.slice(0, at) : null;
+    const rest   = at > 0 ? name.slice(at + PREFIX_SEP.length) : name;
+    const group  = prefix && groups.find(g => g.prefix === prefix);
+    if (group) group.parts.push(rest);
+    else groups.push({ prefix, parts: [rest] });
+  });
+  return groups
+    .map(g => (g.prefix ? g.prefix + PREFIX_SEP : '') + g.parts.join(', '))
+    .join(', ');
+}
 
 // Split into the treatments that make up the manicure and the separately-booked
 // ones. When nothing but separate treatments were booked there is nothing to be
@@ -26,8 +53,8 @@ function splitServices(services) {
 // "מניקור לק ג'ל עם מבנה אנטומי, פרנץ׳ קלאסי, בנוסף, לק ג'ל ברגליים"
 function serviceTitle(services) {
   const { regular, separate } = splitServices(services);
-  const parts = regular.map(s => s.name);
-  if (separate.length) parts.push(`${SEPARATE_PREFIX} ${separate.map(s => s.name).join(', ')}`);
+  const parts = regular.length ? [joinServiceNames(regular)] : [];
+  if (separate.length) parts.push(`${SEPARATE_PREFIX} ${joinServiceNames(separate)}`);
   return parts.join(', ');
 }
 
@@ -37,7 +64,7 @@ function serviceTitle(services) {
 function serviceDetailLines(services) {
   const { regular, separate } = splitServices(services);
   const lines = [];
-  if (regular.length) lines.push(regular.map(s => s.name).join(', '));
+  if (regular.length) lines.push(joinServiceNames(regular));
   separate.forEach(s => {
     const nums = [
       s.time  ? `${s.time} דק'` : '',
@@ -48,4 +75,8 @@ function serviceDetailLines(services) {
   return lines;
 }
 
-module.exports = { SEPARATE_PREFIX, serviceTitle, serviceDetailLines };
+// The booking page loads this as a plain <script> (the functions above are then
+// simply globals); the server and the Netlify functions require() it.
+if (typeof module !== 'undefined' && module.exports) {
+  module.exports = { SEPARATE_PREFIX, joinServiceNames, serviceTitle, serviceDetailLines };
+}
