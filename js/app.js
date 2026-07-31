@@ -55,8 +55,8 @@ const ADDON_PICKERS = {
     title:      'בחרי את הקישוטים',
     subtitle:   'ניתן לבחור יותר מקישוט אחד · הזמן והמחיר יתווספו לתור',
     editLabel:  'שינוי הקישוטים',
-    confirm:      'הוסיפי לתור ✓',
-    confirmEmpty: 'הסירי את הקישוט מהתור',
+    confirm:       'הוסיפי לתור ✓',
+    confirmUpdate: 'עדכני את הטיפול ✓',
     emptyTime:  "10–15 דק'",
     emptyPrice: '5–40 ₪',
     // Priced per nail – which is why french, ombre and pearl powder, covering the
@@ -81,9 +81,11 @@ const ADDON_PICKERS = {
 
 // What the client has chosen in each picker, by picker key → option ids.
 const pickerChoice = {};
-// The last set she confirmed, kept even after she unticks the add-on, so ticking
-// it again during the same booking reopens the picker on what she had rather
-// than a blank sheet. Booking reloads the page, which is what ends its life.
+// The last set she confirmed, kept when the add-on is dropped for a reason of
+// its own rather than by her – dropping the base manicure clears every add-on
+// that only makes sense on top of it – so putting it back reopens the picker on
+// what she had rather than a blank sheet. Taking the add-on off deliberately
+// forgets it, and booking reloads the page, which is what ends its life.
 const pickerLastChoice = {};
 Object.keys(ADDON_PICKERS).forEach(key => {
   pickerChoice[key]     = [];
@@ -752,14 +754,15 @@ function renderPickerDraft() {
 
   document.getElementById('picker-notes').innerHTML = noteBoxesHtml(pickerNotes(cfg, picked));
 
-  // Clearing every option is how the client drops the add-on itself, so with
-  // nothing ticked the button says so – unless there is nothing on the
-  // appointment to drop, when it has nothing to do at all.
+  // The button says what pressing it will do. Until the add-on is on the
+  // appointment it adds it, and there is nothing to add with nothing ticked;
+  // once it is on, it updates it – down to taking it off again, which is what
+  // updating to nothing means.
   const btn = document.getElementById('picker-confirm');
   if (btn) {
-    const canRemove = (pickerChoice[activePicker] || []).length > 0;
-    btn.textContent = !picked.length && canRemove ? cfg.confirmEmpty : cfg.confirm;
-    btn.disabled    = !picked.length && !canRemove;
+    const onAppointment = (pickerChoice[activePicker] || []).length > 0;
+    btn.textContent = onAppointment ? cfg.confirmUpdate : cfg.confirm;
+    btn.disabled    = !onAppointment && !picked.length;
   }
 }
 
@@ -774,10 +777,11 @@ function closePicker() {
 
 document.getElementById('picker-confirm')?.addEventListener('click', () => {
   if (!activePicker) return;
-  // Confirming an empty draft removes the add-on, but her styles are still
-  // remembered for the next time she opens it.
-  if (pickerDraft.length) pickerLastChoice[activePicker] = [...pickerDraft];
-  pickerChoice[activePicker] = [...pickerDraft];
+  // Confirming an empty draft is how the add-on comes off the appointment – and
+  // it is a decision, not an accident, so the styles are forgotten with it and
+  // the picker opens blank next time.
+  pickerChoice[activePicker]     = [...pickerDraft];
+  pickerLastChoice[activePicker] = [...pickerDraft];
   closePicker();
 });
 document.getElementById('picker-close')?.addEventListener('click', closePicker);
