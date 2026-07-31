@@ -55,6 +55,8 @@ const ADDON_PICKERS = {
     title:      'בחרי את הקישוטים',
     subtitle:   'ניתן לבחור יותר מקישוט אחד · הזמן והמחיר יתווספו לתור',
     editLabel:  'שינוי הקישוטים',
+    confirm:      'הוסיפי לתור ✓',
+    confirmEmpty: 'הסירי את הקישוט מהתור',
     emptyTime:  "10–15 דק'",
     emptyPrice: '5–40 ₪',
     // Priced per nail – which is why french, ombre and pearl powder, covering the
@@ -749,7 +751,16 @@ function renderPickerDraft() {
     ${inPerson.length ? `<span class="picker-total-extra">מלבד ${inPerson.join(', ')} – מחירם ייקבע בתור</span>` : ''}`;
 
   document.getElementById('picker-notes').innerHTML = noteBoxesHtml(pickerNotes(cfg, picked));
-  document.getElementById('picker-confirm').disabled = picked.length === 0;
+
+  // Clearing every option is how the client drops the add-on itself, so with
+  // nothing ticked the button says so – unless there is nothing on the
+  // appointment to drop, when it has nothing to do at all.
+  const btn = document.getElementById('picker-confirm');
+  if (btn) {
+    const canRemove = (pickerChoice[activePicker] || []).length > 0;
+    btn.textContent = !picked.length && canRemove ? cfg.confirmEmpty : cfg.confirm;
+    btn.disabled    = !picked.length && !canRemove;
+  }
 }
 
 // Close without keeping the draft. recalculate() then unticks the add-on unless
@@ -762,9 +773,11 @@ function closePicker() {
 }
 
 document.getElementById('picker-confirm')?.addEventListener('click', () => {
-  if (!activePicker || !pickerDraft.length) return;
-  pickerChoice[activePicker]     = [...pickerDraft];
-  pickerLastChoice[activePicker] = [...pickerDraft];
+  if (!activePicker) return;
+  // Confirming an empty draft removes the add-on, but her styles are still
+  // remembered for the next time she opens it.
+  if (pickerDraft.length) pickerLastChoice[activePicker] = [...pickerDraft];
+  pickerChoice[activePicker] = [...pickerDraft];
   closePicker();
 });
 document.getElementById('picker-close')?.addEventListener('click', closePicker);
@@ -802,10 +815,14 @@ function renderPickerRow(row) {
 document.querySelectorAll('.addon-row[data-type="picker"]').forEach(row => {
   const key = row.dataset.picker;
   const cb  = row.querySelector('input[type="checkbox"]');
+  // Every click on the row opens the picker – to choose for the first time, and
+  // just as much to change or drop what is already in it. A click never unticks
+  // the add-on on its own: the tick follows the choice, and the choice is made
+  // inside. So put a tick the click took away straight back, and let the modal
+  // decide what the add-on ends up being.
   cb?.addEventListener('change', () => {
-    if (cb.checked) { openPicker(key); return; }
-    pickerChoice[key] = [];
-    recalculate();
+    if (!cb.checked && (pickerChoice[key] || []).length) cb.checked = true;
+    openPicker(key);
   });
   // The chosen list carries its own way back into the modal.
   row.querySelector('.picker-edit')?.addEventListener('click', e => {
