@@ -1766,7 +1766,7 @@ async function adminCancel(id) {
 let reschedTarget = null;
 let reschedSelDate = null;
 let reschedSelTime = null;
-let reschedFree = new Set();   // free start times ("HH:MM") on the shown day
+let reschedDay = {};           // the shown day, as read by the schedule model
 let reschedCalYear = new Date().getFullYear();
 let reschedCalMonth = new Date().getMonth();
 
@@ -1863,12 +1863,43 @@ function selectReschedDate(dateStr) {
   loadReschedSlots(dateStr);
 }
 
+// What a move to `start` would actually disturb, or null when it disturbs
+// nothing. The grid offers the tidy slots on the 90-minute rhythm; here only
+// real clashes count, because an hour off the rhythm is still a perfectly good
+// hour when the day has room for it.
+function reschedConflict(dateStr, day, start) {
+  const end  = start + (Number(reschedTarget.duration_min) || 0);
+  const wins = MoriyaSchedule.openWindows(dateStr, day);
+  if (!wins.some(w => start >= w.start && end <= w.end)) return 'מחוץ לשעות העבודה';
+
+  // Another client would have to move for this one.
+  const clash = dash.appointments.find(a => {
+    if (a.date !== dateStr || a.status === 'cancelled' || String(a.id) === String(reschedTarget.id)) return false;
+    const s = toMin((a.start_time || '00:00').slice(0, 5));
+    return start < s + (Number(a.duration_min) || 0) && end > s;
+  });
+  if (clash) return `מתנגשת בתור של ${clash.client_name}`;
+
+  const brk = MoriyaSchedule.dayBreaks(dateStr, day);
+  // The fixed break is meant to be bitten into: an appointment may run into it
+  // and stop at its end. Starting inside it, or running past it, is not biting.
+  if (brk.big && ((start >= brk.big.start && start < brk.big.end) ||
+                  (start < brk.big.start && end > brk.big.end))) return 'נופלת בהפסקה קבועה';
+  if ((day.block || []).some(b => start < b.end && end > b.start)) return 'נופלת בהפסקה קבועה';
+  // The floating break isn't bitten, it's pushed — worth saying out loud.
+  if (brk.float && end > brk.float.notBefore && start < brk.float.notBefore + brk.float.len) {
+    return 'תדחה את ההפסקה המזדמנת';
+  }
+  return null;
+}
+
 // Times the day genuinely has room for, sliced by the same rules clients get —
 // breaks included, so a move never lands on top of one by accident.
 async function reschedFreeStarts(dateStr) {
   const [Y, M] = dateStr.split('-').map(Number);
   const states = await getMonthDayStates(Y, M - 1);
   const day    = states.get(dateStr) || {};
+  reschedDay   = day;
   const today  = todayStr();
   const notBefore = dateStr === today ? new Date().getHours() * 60 + new Date().getMinutes() : undefined;
 
@@ -1893,8 +1924,6 @@ async function loadReschedSlots(dateStr) {
   refreshReschedSave();
 
   const starts = await reschedFreeStarts(dateStr);
-  reschedFree = new Set(starts.map(fromMin));
-
   setTimeSelect('resched', reschedSelTime ? toMin(reschedSelTime) : (starts[0] ?? 9 * 60));
   document.getElementById('resched-manual-note').textContent = '';
 
@@ -1917,8 +1946,9 @@ function selectReschedSlot(time) {
   refreshReschedSave();
 }
 
-// Any hour Moriya types in is allowed; one that isn't a free slot is taken with
-// a warning attached, so she moves an appointment knowingly and never by accident.
+// Any hour Moriya types in is allowed. She is only warned when the hour would
+// actually displace something — another client, or a break that gets pushed
+// rather than bitten into.
 function pickManualReschedTime() {
   const min  = readTimeSelect('resched');
   const time = fromMin(min);
@@ -1927,13 +1957,14 @@ function pickManualReschedTime() {
     c.classList.toggle('selected', c.dataset.time === time));
 
   const note = document.getElementById('resched-manual-note');
-  if (reschedFree.has(time)) {
-    note.textContent = `✓ ${time} — שעה פנויה`;
-    note.className = 'mt-note ok';
-  } else {
-    const end = fromMin(min + (Number(reschedTarget.duration_min) || 0));
-    note.innerHTML = `⚠ <span dir="ltr">${time}–${end}</span> אינה שעה פנויה — היא חורגת משעות העבודה, נופלת בהפסקה או מתנגשת בתור אחר. אפשר לשמור בכל זאת.`;
+  const why  = reschedConflict(reschedSelDate, reschedDay, min);
+  const end  = fromMin(min + (Number(reschedTarget.duration_min) || 0));
+  if (why) {
+    note.innerHTML = `⚠ <span dir="ltr">${time}–${end}</span> ${why}. אפשר לשמור בכל זאת.`;
     note.className = 'mt-note warn';
+  } else {
+    note.innerHTML = `✓ <span dir="ltr">${time}–${end}</span> פנוי`;
+    note.className = 'mt-note ok';
   }
   refreshReschedSave();
 }
@@ -1950,12 +1981,14 @@ async function saveReschedule() {
   const fb = document.getElementById('resched-feedback');
   if (!date || !time) { fb.textContent = 'יש לבחור תאריך ושעה'; fb.className = 'avail-feedback err'; return; }
 
-  // A time outside the day's free slots is allowed, but never silently.
-  if (!reschedFree.has(time)) {
+  // An hour with room for the appointment is simply taken. Only one that would
+  // displace something is worth stopping for.
+  const why = reschedConflict(date, reschedDay, toMin(time));
+  if (why) {
     const ok = await confirmDialog({
       icon:        '⚠️',
-      title:       'שעה שאינה פנויה',
-      message:     `${time} אינה אחת מהשעות הפנויות ביום ${fmtDate(date)} — היא חורגת משעות העבודה, נופלת בהפסקה או מתנגשת בתור אחר. התור יוזז לשם בכל זאת?`,
+      title:       'שימי לב',
+      message:     `השעה ${time} בתאריך ${fmtDate(date)} ${why}. להזיז לשם בכל זאת?`,
       confirmText: 'כן, הזיזי לשם',
       cancelText:  'חזרה',
       tone:        'danger',
@@ -2056,7 +2089,11 @@ function wireControls() {
     if (e.target.id === 'resched-modal') e.target.style.display = 'none';
   });
   document.getElementById('resched-save').addEventListener('click', saveReschedule);
+  // Turning the dials picks the hour straight away, so what the note says and
+  // what the save button would write are never out of step.
   document.getElementById('resched-manual').addEventListener('click', pickManualReschedTime);
+  ['resched-h', 'resched-m'].forEach(id =>
+    document.getElementById(id).addEventListener('change', pickManualReschedTime));
   document.getElementById('resched-other-date').addEventListener('click', () => {
     showReschedDate(true);
     document.getElementById('resched-title').textContent = 'הזזת תור';
