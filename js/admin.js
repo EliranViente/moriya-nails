@@ -106,29 +106,52 @@ function sendReminder(id) {
   window.open(url, '_blank', 'noopener');
 }
 
-// ─── "I moved your appointment" notice ────────────────────────────────────────
-// Appointments Moriya moved during this session. A move is the one change a
-// client can't see coming, so those — and only those — offer a WhatsApp notice
-// alongside the usual reminder, until the dashboard is reloaded.
-const movedAppts = new Set();
+// ─── "I changed your appointment" notices ─────────────────────────────────────
+// Appointments Moriya moved or cancelled during this session. Those are the two
+// changes a client can't see coming, so they — and only they — offer a WhatsApp
+// notice alongside the usual reminder, until the dashboard is reloaded.
+const movedAppts     = new Set();
+const cancelledAppts = new Set();
 
 function moveText(appt) {
   const time = (appt.start_time || '').slice(0, 5);
   return `${appt.client_name} אהובה, הזזתי את התור שלך ל-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
 }
 
-function waMoveLink(appt) {
-  const phone = waPhone(appt.client_phone);
-  if (!phone) return '';
-  return `https://wa.me/${phone}?text=${encodeURIComponent(moveText(appt))}`;
+function cancelNoticeText(appt) {
+  const time = (appt.start_time || '').slice(0, 5);
+  return `${appt.client_name} אהובה, ביטלתי את התור שלך ב-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
 }
 
-function sendMoveNotice(id) {
+function waLink(appt, text) {
+  const phone = waPhone(appt.client_phone);
+  if (!phone) return '';
+  return `https://wa.me/${phone}?text=${encodeURIComponent(text)}`;
+}
+
+function openNotice(id, build) {
   const appt = dash.appointments.find(a => String(a.id) === String(id));
   if (!appt) return;
-  const url = waMoveLink(appt);
+  const url = waLink(appt, build(appt));
   if (!url) { alert('אין מספר טלפון תקין ללקוחה זו 🙈'); return; }
   window.open(url, '_blank', 'noopener');
+}
+
+const sendMoveNotice   = id => openNotice(id, moveText);
+const sendCancelNotice = id => openNotice(id, cancelNoticeText);
+
+// Offered the moment the cancellation goes through, while Moriya is still on it.
+async function offerCancelNotice(appt) {
+  if (!waPhone(appt.client_phone)) return;
+  const send = await confirmDialog({
+    icon:        '💬',
+    title:       'להודיע ללקוחה?',
+    message:     cancelNoticeText(appt),
+    confirmText: 'שלחי בוואטסאפ',
+    cancelText:  'לא עכשיו',
+    tone:        'safe',
+  });
+  if (send) sendCancelNotice(appt.id);
 }
 
 async function getAccessToken() {
@@ -1313,7 +1336,10 @@ function renderAppointments() {
     // the new time from her rather than discovering it.
     const movedBtn = canRemind && movedAppts.has(String(a.id))
       ? `<button class="appt-btn moved" data-id="${a.id}">💬 הודעה על ההזזה</button>` : '';
-    const actions = (cancelled || past) ? '' : `
+    // A cancelled appointment keeps one action: telling the client it's off.
+    const cancelledBtn = cancelled && cancelledAppts.has(String(a.id)) && a.client_phone
+      ? `<button class="appt-btn moved" data-act="cancel-notice" data-id="${a.id}">💬 הודעה על הביטול</button>` : '';
+    const actions = cancelled ? cancelledBtn : past ? '' : `
       ${movedBtn}
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
@@ -1335,8 +1361,8 @@ function renderAppointments() {
 
   box.querySelectorAll('.appt-btn.remind').forEach(b =>
     b.addEventListener('click', () => sendReminder(b.dataset.id)));
-  box.querySelectorAll('.appt-btn.moved').forEach(b =>
-    b.addEventListener('click', () => sendMoveNotice(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.moved').forEach(b => b.addEventListener('click', () =>
+    (b.dataset.act === 'cancel-notice' ? sendCancelNotice : sendMoveNotice)(b.dataset.id)));
   box.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
@@ -1759,7 +1785,9 @@ async function adminCancel(id) {
   appt.status = 'cancelled';
   if (!calOk) alert('התור בוטל במערכת, אך ייתכן שלא הוסר מיומן Google — כדאי לבדוק ידנית.');
 
+  cancelledAppts.add(String(appt.id));
   renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+  offerCancelNotice(appt);
 }
 
 // ── Reschedule modal ──
