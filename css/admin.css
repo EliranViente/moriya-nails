@@ -325,6 +325,7 @@
 .win-badge.open { background: var(--pink-100); color: var(--pink-500); }
 .win-badge.block { background: #ffe1d8; color: #c0552f; }
 .win-slots { font-size: 0.8rem; color: var(--gray-600); }
+.win-short { color: var(--gold-dark); font-weight: 600; }
 .win-default { font-size: 0.72rem; font-weight: 600; color: var(--gold-dark); }
 .day-closed {
   background: var(--gray-100); border: 1px dashed var(--gray-400);

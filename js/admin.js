@@ -211,8 +211,9 @@ async function initDashboard() {
   wireControls();
   wireClientsControls();
 
-  // Default the availability editor to the next Friday and open the calendar there.
-  adminSelDate = nextFridayStr();
+  // Open on the day Moriya is most likely to be looking for: today when she is
+  // working, otherwise the next day she has hours for.
+  adminSelDate = await nextWorkDay(todayStr());
   const [y, m] = adminSelDate.split('-').map(Number);
   adminCalYear = y; adminCalMonth = m - 1;
   setEditorTime('start', '09:00');
@@ -225,6 +226,23 @@ function nextFridayStr() {
   const d = new Date();
   d.setDate(d.getDate() + ((5 - d.getDay() + 7) % 7 || 7));
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+}
+
+// The first day from `startStr` onwards with working hours — a Friday by
+// default, or any day Moriya opened. A month's availability is read once and
+// reused, so this costs one query in the ordinary case. If she has nothing on
+// the books for months, fall back to the coming Friday.
+async function nextWorkDay(startStr) {
+  const d = new Date(`${startStr}T00:00:00`);
+  const months = new Map();
+  for (let i = 0; i < 120; i++) {
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    if (!months.has(key)) months.set(key, await getMonthDayStates(d.getFullYear(), d.getMonth()));
+    const dateStr = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+    if (effectiveOpen(dateStr, months.get(key).get(dateStr)).length) return dateStr;
+    d.setDate(d.getDate() + 1);
+  }
+  return nextFridayStr();
 }
 
 // ─── Availability calendar ────────────────────────────────────────────────────
@@ -823,7 +841,11 @@ async function loadDayWindows(date) {
 function renderDaySummary(date, wins, items) {
   if (!wins.length) return '';   // a day with breaks but no working hours
   const booked = items.filter(i => i.kind === 'appt');
-  const free   = items.filter(i => i.kind === 'free' && i.full && !isPastMin(date, i.start));
+  const open   = items.filter(i => i.kind === 'free' && !isPastMin(date, i.start));
+  const free   = open.filter(i => i.full);
+  // The shortest treatment on the menu is an hour (the feet gel polish), so a
+  // leftover that long is still worth something even if no full slot fits in it.
+  const gaps   = open.filter(i => !i.full && i.end - i.start >= 60);
 
   const hours = booked.length
     ? `<strong dir="ltr">${fromMin(Math.min(...booked.map(b => b.start)))}–${fromMin(Math.max(...booked.map(b => b.end)))}</strong>`
@@ -831,6 +853,8 @@ function renderDaySummary(date, wins, items) {
   const left = free.length === 1 ? 'נותר תור פנוי אחד'
              : free.length ? `נותרו ${free.length} תורים פנויים`
              : 'לא נותרו תורים פנויים';
+  const shortTxt = gaps.length === 1 ? 'רווח לטיפול קצר'
+                 : gaps.length ? `${gaps.length} רווחים לטיפול קצר` : '';
 
   // Windows Moriya added herself can be removed one by one; the Friday default
   // has no row of its own, and goes through "בטלי יום".
@@ -839,7 +863,7 @@ function renderDaySummary(date, wins, items) {
 
   return `<div class="avail-win open">
     <div class="win-head"><span class="win-badge open">🟢 עבודה</span>${hours}</div>
-    <span class="win-slots">${left}</span>
+    <span class="win-slots">${left}${shortTxt ? ` · <span class="win-short">${shortTxt}</span>` : ''}</span>
     ${chips ? `<div class="win-chips">${chips}</div>` : ''}
   </div>`;
 }
@@ -892,7 +916,11 @@ function dtRow(cls, item, label, actions, detail) {
 }
 
 function timelineRow(date, item, wins) {
-  const past = isPastMin(date, item.end);
+  // A free slot is gone the moment its start passes — nobody can book it any
+  // more. An appointment or a break is still live until it ends.
+  const past = item.kind === 'free'
+    ? isPastMin(date, item.start)
+    : isPastMin(date, item.end);
 
   if (item.kind === 'appt') return apptTimelineRow(item);
 
