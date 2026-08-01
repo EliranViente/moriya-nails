@@ -159,6 +159,7 @@
           <h2>ניהול תורים</h2>
           <div class="appt-filters" id="appt-filters">
             <button class="range-tab active" data-filter="upcoming">עתידיים</button>
+            <button class="range-tab" data-filter="done">בוצעו</button>
             <button class="range-tab" data-filter="all">הכל</button>
             <button class="range-tab" data-filter="cancelled">בוטלו</button>
           </div>
@@ -297,6 +298,30 @@
     </div>
   </div>
 
+  <!-- ──────────────── TREATMENTS MODAL ────────────────
+       What the client actually had done. Clients add treatments at the
+       appointment itself ("while you're at it, add a french"), and until that
+       is recorded here the reports are short. Opened from a completed
+       appointment; every treatment on offer is listed, the ones on the
+       appointment are pre-ticked, and saving rewrites the treatment list, the
+       length and the price. The calendar is left alone — the appointment is
+       over, so its event has nothing left to say. -->
+  <div class="modal-overlay" id="svc-modal" style="display:none;">
+    <div class="modal-card svc-card">
+      <button class="modal-close" id="svc-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title">עריכת הטיפולים בתור</h3>
+      <p class="modal-sub" id="svc-sub"></p>
+
+      <div class="resched-current" id="svc-current"></div>
+
+      <div class="svc-body" id="svc-list"><!-- rendered by JS --></div>
+
+      <div class="rx-summary" id="svc-summary"></div>
+      <p class="avail-feedback" id="svc-feedback"></p>
+      <button class="admin-btn primary full" id="svc-save">שמירה</button>
+    </div>
+  </div>
+
   <!-- ──────────────── TIME PICKER MODAL ────────────────
        Shared by the day view: moving a slot that nobody booked yet, and
        changing a break's hours. -->
@@ -337,6 +362,7 @@
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/schedule.js"></script>
+  <script src="js/treatments.js"></script>
   <script src="js/admin.js"></script>
 </body>
 </html>

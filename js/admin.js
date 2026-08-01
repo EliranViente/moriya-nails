@@ -673,7 +673,7 @@ function exportApptRows(ranges) {
       'טיפולים': (a.services || []).map(s => s.name).join(' · '),
       'משך (דק׳)': Number(a.duration_min || 0),
       'מחיר ₪': Number(a.total_price || 0),
-      'סטטוס': STATUS_HE[a.status] || a.status,
+      'סטטוס': STATUS_HE[effectiveStatus(a)] || a.status,
       'הערות': a.notes || '',
       'נקבע בתאריך': a.created_at ? fmtDate(String(a.created_at).slice(0, 10)) : '',
       'טווח': rangeLabelFor(a.date, ranges),
@@ -1287,6 +1287,18 @@ function isPastAppt(a) {
   return end < Date.now();
 }
 
+// The status to show and to count by. Nothing marks an appointment 'done' in the
+// database when its hour passes, so an appointment that has already happened
+// still reads 'booked' there — which is why the status is derived from the clock
+// everywhere it is used (the cards, the client's chart, the Excel export) rather
+// than in one place. A status that was set deliberately is never overridden.
+function effectiveStatus(a) {
+  if (!a) return '';
+  if (a.status === 'cancelled' || a.status === 'done' || a.status === 'no_show') return a.status;
+  return isPastAppt(a) ? 'done' : a.status;
+}
+const isDoneAppt = a => effectiveStatus(a) === 'done';
+
 // Narrow upcoming appointments to a relative time window from now.
 // Windows are cumulative: 24h = next 24 hours, week = next 7 days,
 // month = next 30 days. "all" returns the full upcoming list.
@@ -1313,8 +1325,13 @@ function renderAppointments() {
     list = applyWindowFilter(list);
   } else if (dash.apptFilter === 'cancelled') {
     list = list.filter(a => a.status === 'cancelled');
+  } else if (dash.apptFilter === 'done') {
+    list = list.filter(isDoneAppt);
   }
   list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
+  // Completed appointments read newest first: the one Moriya just finished — and
+  // is most likely here to correct — is at the top.
+  if (dash.apptFilter === 'done') list.reverse();
 
   if (!list.length) {
     box.innerHTML = '<p class="avail-empty">אין תורים להצגה.</p>';
@@ -1326,8 +1343,9 @@ function renderAppointments() {
     const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
     const cancelled = a.status === 'cancelled';
     const past      = !cancelled && isPastAppt(a);
-    // A past appointment is shown as completed and is locked for editing.
-    const statusKey   = past ? 'done' : a.status;
+    // A past appointment is shown as completed; its date and hour are locked,
+    // but the treatments on it stay editable (see openServiceEditor).
+    const statusKey   = effectiveStatus(a);
     const statusLabel = STATUS_HE[statusKey] || statusKey;
     // Reminder only makes sense for an upcoming appointment that has a phone.
     const canRemind = !cancelled && !past && a.client_phone;
@@ -1339,7 +1357,11 @@ function renderAppointments() {
     // A cancelled appointment keeps one action: telling the client it's off.
     const cancelledBtn = cancelled && cancelledAppts.has(String(a.id)) && a.client_phone
       ? `<button class="appt-btn moved" data-act="cancel-notice" data-id="${a.id}">💬 הודעה על הביטול</button>` : '';
-    const actions = cancelled ? cancelledBtn : past ? '' : `
+    // What was actually done at the appointment is only known once it is over —
+    // clients add treatments on the spot — so a completed appointment keeps one
+    // action: correcting its treatment list.
+    const servicesBtn = `<button class="appt-btn services" data-id="${a.id}">💅 עריכת טיפולים</button>`;
+    const actions = cancelled ? cancelledBtn : past ? servicesBtn : `
       ${movedBtn}
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
@@ -1365,6 +1387,8 @@ function renderAppointments() {
     (b.dataset.act === 'cancel-notice' ? sendCancelNotice : sendMoveNotice)(b.dataset.id)));
   box.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.services').forEach(b =>
+    b.addEventListener('click', () => openServiceEditor(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
     b.addEventListener('click', () => adminCancel(b.dataset.id)));
 }
@@ -1647,10 +1671,12 @@ async function deleteClient(btn) {
   document.getElementById('client-panel')?.classList.remove('is-open');
 }
 
-// Tally a client's appointments by status (matched on user_id).
+// Tally a client's appointments by status (matched on user_id). Counted by the
+// effective status, so an appointment that has already happened shows up as
+// completed rather than still-upcoming.
 function clientStats(clientId) {
   const appts = dash.appointments.filter(a => a.user_id === clientId);
-  const by = s => appts.filter(a => a.status === s).length;
+  const by = s => appts.filter(a => effectiveStatus(a) === s).length;
   return {
     total:     appts.length,
     done:      by('done'),
@@ -2183,6 +2209,263 @@ function showReschedDone(appt) {
   notify.onclick = () => sendMoveNotice(appt.id);
 }
 
+// ─── Treatments on a completed appointment ────────────────────────────────────
+// What a client books and what she ends up having done are not always the same:
+// treatments get added at the appointment itself, and until that is recorded the
+// reports are short. This editor is where Moriya puts it right, after the fact:
+// the treatment list, the length and the price. Nothing is sent anywhere — the
+// appointment is over, so the correction only has to reach the record.
+let svcTarget = null;
+// Services on the appointment with no entry of their own in the catalogue (an
+// older name, or something no longer offered). They are shown, can be dropped,
+// and otherwise ride along untouched — an edit never quietly loses a treatment.
+let svcKept = [];
+
+function svcRowHtml(x) {
+  // A base manicure and a foot treatment carry their own time and price; a hand
+  // add-on is written as what it adds — exactly as the booking page reads.
+  const plus  = (!x.exclusive && !x.separate) ? '+' : '';
+  const time  = `${plus}${x.time} דק'`;
+  const price = x.priceLabel
+    // A decoration priced at the appointment: now that it has happened, the
+    // price is known, so this is where it is actually filled in.
+    ? `<span class="svc-price-field"><input type="number" class="svc-price-input" data-id="${x.id}"
+             min="0" step="5" value="0" aria-label="מחיר שנגבה בפועל" /><span>₪</span></span>`
+    : `<span class="rx-price">${plus}${x.price} ₪</span>`;
+
+  if (x.type === 'quantity') {
+    return `
+      <div class="rx-row" data-id="${x.id}">
+        <span class="rx-emoji">${x.emoji}</span>
+        <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc || ''}</span></span>
+        <span class="rx-qty">
+          <button type="button" class="rx-qty-btn minus" data-id="${x.id}">−</button>
+          <input type="number" class="rx-qty-input svc-qty-input" data-id="${x.id}" value="0" min="0" max="10" />
+          <button type="button" class="rx-qty-btn plus" data-id="${x.id}">+</button>
+        </span>
+      </div>`;
+  }
+  return `
+    <label class="rx-row" data-id="${x.id}">
+      <input type="checkbox" class="rx-check svc-check" data-id="${x.id}" />
+      <span class="rx-box"></span>
+      <span class="rx-emoji">${x.emoji}</span>
+      <span class="rx-detail"><span class="rx-name">${x.name}</span><span class="rx-desc">${x.desc || ''}</span></span>
+      <span class="rx-nums"><span class="rx-time">${time}</span>${price}</span>
+    </label>`;
+}
+
+function renderServiceEditor(match) {
+  const box = document.getElementById('svc-list');
+  box.innerHTML = MoriyaTreatments.sections().map(sec => `
+    <div class="svc-sec">
+      <h4 class="svc-sec-title">${sec.title}${sec.hint ? `<span class="svc-sec-hint">${sec.hint}</span>` : ''}</h4>
+      <div class="rx-list">${sec.items.map(svcRowHtml).join('')}</div>
+    </div>`).join('') + `<div class="svc-kept" id="svc-kept"></div>`;
+
+  // Pre-fill from what is on the appointment.
+  Object.keys(match.picked).forEach(id => {
+    const cb = box.querySelector(`.svc-check[data-id="${id}"]`);
+    if (cb) cb.checked = true;
+  });
+  Object.entries(match.qty).forEach(([id, n]) => {
+    const inp = box.querySelector(`.svc-qty-input[data-id="${id}"]`);
+    if (inp) inp.value = Math.max(0, Math.min(parseInt(inp.max) || 10, n));
+  });
+  Object.entries(match.price).forEach(([id, p]) => {
+    const inp = box.querySelector(`.svc-price-input[data-id="${id}"]`);
+    if (inp) inp.value = p;
+  });
+
+  box.querySelectorAll('.svc-check').forEach(cb => cb.addEventListener('change', () => {
+    // The two base manicures are alternatives, exactly as on the booking page.
+    const entry = MoriyaTreatments.all().find(x => x.id === cb.dataset.id);
+    if (entry && entry.exclusive && cb.checked) {
+      box.querySelectorAll('.svc-check').forEach(other => {
+        if (other === cb) return;
+        const oe = MoriyaTreatments.all().find(x => x.id === other.dataset.id);
+        if (oe && oe.exclusive === entry.exclusive) other.checked = false;
+      });
+    }
+    recalcServiceEdit();
+  }));
+  box.querySelectorAll('.svc-price-input').forEach(inp => {
+    inp.addEventListener('input', recalcServiceEdit);
+    // The input sits inside the row's <label>; without this a tap on it would
+    // also toggle the treatment off.
+    inp.addEventListener('click', e => e.stopPropagation());
+  });
+  box.querySelectorAll('.svc-qty-input').forEach(inp => inp.addEventListener('input', () => {
+    let v = parseInt(inp.value) || 0;
+    const max = parseInt(inp.max) || 10;
+    inp.value = Math.max(0, Math.min(max, v));
+    recalcServiceEdit();
+  }));
+  box.querySelectorAll('.rx-qty-btn').forEach(btn => btn.addEventListener('click', () => {
+    const inp = box.querySelector(`.svc-qty-input[data-id="${btn.dataset.id}"]`);
+    if (!inp) return;
+    let v = parseInt(inp.value) || 0;
+    const max = parseInt(inp.max) || 10;
+    if (btn.classList.contains('plus')  && v < max) v++;
+    if (btn.classList.contains('minus') && v > 0)   v--;
+    inp.value = v;
+    recalcServiceEdit();
+  }));
+
+  renderServiceKept();
+  recalcServiceEdit();
+}
+
+// The services that have no control of their own, listed so they are visible in
+// the total and removable if they don't belong.
+function renderServiceKept() {
+  const box = document.getElementById('svc-kept');
+  if (!box) return;
+  if (!svcKept.length) { box.innerHTML = ''; return; }
+  box.innerHTML = `
+    <h4 class="svc-sec-title">טיפולים אחרים ששמורים בתור</h4>
+    <div class="rx-list">${svcKept.map((s, i) => `
+      <div class="rx-row checked">
+        <span class="rx-emoji">📌</span>
+        <span class="rx-detail"><span class="rx-name">${s.name}</span></span>
+        <span class="rx-nums"><span class="rx-time">${s.time || 0} דק'</span><span class="rx-price">${Number(s.price) || 0} ₪</span></span>
+        <button type="button" class="svc-drop" data-i="${i}" aria-label="הסרת הטיפול">✕</button>
+      </div>`).join('')}</div>`;
+  box.querySelectorAll('.svc-drop').forEach(b => b.addEventListener('click', () => {
+    svcKept.splice(Number(b.dataset.i), 1);
+    renderServiceKept();
+    recalcServiceEdit();
+  }));
+}
+
+// Everything currently ticked, in the {name,time,price} shape the appointment
+// stores — the same shape the booking flow writes.
+function collectServiceEdit() {
+  const box = document.getElementById('svc-list');
+  const picked = [];
+  MoriyaTreatments.all().forEach(x => {
+    if (x.type === 'quantity') {
+      const inp = box.querySelector(`.svc-qty-input[data-id="${x.id}"]`);
+      const n = Math.max(0, parseInt(inp && inp.value) || 0);
+      if (n > 0) picked.push(MoriyaTreatments.toService(x, { count: n }));
+      return;
+    }
+    const cb = box.querySelector(`.svc-check[data-id="${x.id}"]`);
+    if (!cb || !cb.checked) return;
+    const priceInput = box.querySelector(`.svc-price-input[data-id="${x.id}"]`);
+    picked.push(MoriyaTreatments.toService(x, {
+      overridePrice: priceInput ? Math.max(0, Number(priceInput.value) || 0) : null,
+    }));
+  });
+  return picked.concat(svcKept);
+}
+
+function recalcServiceEdit() {
+  const box = document.getElementById('svc-list');
+  if (!box || !svcTarget) return;
+
+  // The feet add-ons only apply on top of the polish itself — the same rule the
+  // booking page follows, shown the same way: still listed, but not selectable.
+  const feetGelOn = !!box.querySelector('.svc-check[data-id="feetgel"]')?.checked;
+  MoriyaTreatments.all().forEach(x => {
+    if (!x.requiresGel) return;
+    const cb = box.querySelector(`.svc-check[data-id="${x.id}"]`);
+    if (!cb) return;
+    if (!feetGelOn && cb.checked) cb.checked = false;
+    cb.disabled = !feetGelOn;
+    cb.closest('.rx-row')?.classList.toggle('locked', !feetGelOn);
+  });
+
+  box.querySelectorAll('.rx-row[data-id]').forEach(row => {
+    const cb  = row.querySelector('.svc-check');
+    const qty = row.querySelector('.svc-qty-input');
+    const on  = cb ? cb.checked : (parseInt(qty && qty.value) || 0) > 0;
+    row.classList.toggle('checked', on);
+  });
+
+  const services = collectServiceEdit();
+  const duration = services.reduce((s, x) => s + (Number(x.time)  || 0), 0);
+  const price    = services.reduce((s, x) => s + (Number(x.price) || 0), 0);
+  const wasDur   = Number(svcTarget.duration_min) || 0;
+  const wasPrice = Number(svcTarget.total_price)  || 0;
+  const delta = p => {
+    const d = Math.round(p);
+    return d === 0 ? '' : ` <span class="svc-delta ${d > 0 ? 'up' : 'down'}">(${d > 0 ? '+' : '−'}${Math.abs(d)})</span>`;
+  };
+
+  const sum = document.getElementById('svc-summary');
+  sum.innerHTML = `
+    <span class="rx-sum-label">סה״כ מעודכן</span>
+    <span class="rx-sum-vals">
+      <strong>${duration} דק'</strong>${delta(duration - wasDur)} ·
+      <strong>${ils(price)}</strong>${delta(price - wasPrice)}
+    </span>`;
+
+  const save = document.getElementById('svc-save');
+  if (save) save.disabled = !services.length;
+  const fb = document.getElementById('svc-feedback');
+  if (fb && !services.length) {
+    fb.textContent = 'צריך להישאר לפחות טיפול אחד בתור. לביטול התור כולו יש להשתמש בכפתור הביטול.';
+    fb.className = 'avail-feedback err';
+  } else if (fb) {
+    fb.textContent = '';
+    fb.className = 'avail-feedback';
+  }
+}
+
+function openServiceEditor(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt || appt.status === 'cancelled') return;
+  svcTarget = appt;
+
+  const match = MoriyaTreatments.matchServices(appt.services);
+  svcKept = match.unmatched.slice();
+
+  document.getElementById('svc-sub').textContent = appt.client_name || '';
+  document.getElementById('svc-current').innerHTML = `
+    <span class="rc-label">התור שבוצע</span>
+    <span class="rc-when">📅 ${dowLabel(appt.date)} · ${fmtDate(appt.date)} · ⏰ ${(appt.start_time || '').slice(0, 5)}</span>
+    <span class="rc-svc">${(appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל"} · ${appt.duration_min} דק' · ${ils(Number(appt.total_price || 0))}</span>`;
+  document.getElementById('svc-feedback').textContent = '';
+  document.getElementById('svc-feedback').className = 'avail-feedback';
+  const save = document.getElementById('svc-save');
+  save.disabled = false; save.textContent = 'שמירה';
+
+  renderServiceEditor(match);
+  document.getElementById('svc-modal').style.display = 'flex';
+}
+
+async function saveServiceEdit() {
+  if (!svcTarget) return;
+  const services = collectServiceEdit();
+  const fb = document.getElementById('svc-feedback');
+  if (!services.length) return;
+
+  const duration = services.reduce((s, x) => s + (Number(x.time)  || 0), 0);
+  const price    = services.reduce((s, x) => s + (Number(x.price) || 0), 0);
+
+  const btn = document.getElementById('svc-save');
+  btn.disabled = true; btn.textContent = 'שומרת…';
+
+  // The calendar is deliberately left alone: the appointment has already
+  // happened, so its event has nothing left to tell Moriya or the client. This
+  // correction is for the record — the reports, the charts and the totals.
+  //
+  // An appointment Moriya has just gone over is one she has confirmed happened,
+  // so it is written down as completed instead of staying an old 'booked' row.
+  const patch = { services, duration_min: duration, total_price: price };
+  if (svcTarget.status !== 'no_show' && isPastAppt(svcTarget)) patch.status = 'done';
+
+  const { error } = await MoriyaAuth.sb.from('appointments').update(patch).eq('id', svcTarget.id);
+  btn.disabled = false; btn.textContent = 'שמירה';
+  if (error) { fb.textContent = 'השמירה נכשלה: ' + error.message; fb.className = 'avail-feedback err'; return; }
+
+  Object.assign(svcTarget, patch);
+  document.getElementById('svc-modal').style.display = 'none';
+  svcTarget = null;
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+}
+
 // ─── Controls (range tabs, filters, modal) ────────────────────────────────────
 function wireControls() {
   document.querySelectorAll('#range-tabs .range-tab').forEach(tab => {
@@ -2234,6 +2517,16 @@ function wireControls() {
     showReschedDate(true);
     document.getElementById('resched-title').textContent = 'הזזת תור';
   });
+
+  const closeSvc = () => {
+    document.getElementById('svc-modal').style.display = 'none';
+    svcTarget = null;
+  };
+  document.getElementById('svc-close').addEventListener('click', closeSvc);
+  document.getElementById('svc-modal').addEventListener('click', e => {
+    if (e.target.id === 'svc-modal') closeSvc();
+  });
+  document.getElementById('svc-save').addEventListener('click', saveServiceEdit);
 
   document.getElementById('tm-close').addEventListener('click', closeTimeModal);
   document.getElementById('tm-modal').addEventListener('click', e => {

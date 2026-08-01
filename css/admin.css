@@ -278,6 +278,49 @@
 }
 .resched-done .admin-btn + .admin-btn { margin-top: 8px; }
 
+/* ── Treatments modal (what the client actually had done) ──
+   The treatment rows themselves reuse the .rx-* controls of the public site's
+   "add extras" panel, so a treatment reads the same wherever it is picked. */
+.svc-card {
+  max-width: 580px;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;   /* the treatment list scrolls, the totals and save stay put */
+}
+.svc-card > *:not(.svc-body) { flex-shrink: 0; }
+.svc-body {
+  overflow-y: auto;
+  -webkit-overflow-scrolling: touch;
+  display: flex; flex-direction: column; gap: 20px;
+  /* Room for the rows' focus ring and hover shadow inside the scroller. */
+  padding: 2px; margin: 0 -2px;
+}
+.svc-card .rx-summary { display: flex; }
+.svc-sec-title {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 0.9rem; font-weight: 700; color: var(--gray-700); margin-bottom: 10px;
+}
+.svc-sec-hint { font-size: 0.75rem; font-weight: 500; color: var(--gray-500); }
+/* A decoration is priced at the appointment itself — this is where the price it
+   was actually sold for is filled in. */
+.svc-price-field { display: flex; align-items: center; gap: 4px; font-size: 0.8rem; color: var(--gray-600); }
+.svc-price-field input {
+  font-family: var(--font); font-size: 0.85rem; font-weight: 700; color: var(--pink-500);
+  width: 62px; padding: 4px 8px; text-align: center;
+  border: 1.5px solid var(--pink-200); border-radius: var(--radius-sm); background: var(--white);
+}
+.svc-price-field input:focus { outline: none; border-color: var(--pink-400); }
+.svc-delta { font-size: 0.78rem; font-weight: 700; }
+.svc-delta.up   { color: #2e7d4f; }
+.svc-delta.down { color: #b9770e; }
+.svc-drop {
+  font-family: var(--font); cursor: pointer; flex-shrink: 0;
+  width: 28px; height: 28px; border-radius: 50%; font-size: 0.9rem;
+  border: 1.5px solid var(--pink-100); background: var(--white); color: var(--gray-600);
+  transition: all var(--transition);
+}
+.svc-drop:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
+
 .tm-card { max-width: 420px; }
 .tm-hint { font-size: 0.8rem; color: var(--gray-600); line-height: 1.6; }
 
@@ -397,9 +440,10 @@
   padding: 16px 20px; background: var(--white); transition: box-shadow var(--transition);
 }
 .admin-appt-card:hover { box-shadow: var(--shadow-sm); }
-/* Past (completed) appointments are read-only and muted whole. A cancelled one
-   keeps one live action — telling the client — so only its details are muted. */
-.admin-appt-card.is-past { opacity: 0.55; }
+/* A completed or cancelled appointment keeps a live action of its own — fixing
+   the treatment list, telling the client — so only its details are muted. */
+.admin-appt-card.is-past .aac-main,
+.admin-appt-card.is-past .aac-side,
 .admin-appt-card.is-cancelled .aac-main,
 .admin-appt-card.is-cancelled .aac-side { opacity: 0.55; }
 .aac-when { font-size: 1rem; color: var(--gray-800); }
@@ -426,6 +470,8 @@
 .appt-btn.cancel:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
 .appt-btn.remind { color: #0a8a4a; background: #e8f8ef; border-color: #bfe9d2; }
 .appt-btn.remind:hover { background: #d6f2e2; border-color: #9fe0bd; }
+.appt-btn.services { color: var(--pink-500); background: var(--pink-50); }
+.appt-btn.services:hover { background: var(--pink-100); border-color: var(--pink-300); }
 
 /* ── Clients table ── */
 /* The hint sits between the header row and the table when used standalone. */
