@@ -33,51 +33,19 @@ const state = {
 let editingAppointment = null;
 
 // ─── Add-on option pickers ───────────────────────────────────────────────────
-// An add-on whose sub-options the client chooses on a screen of their own: she
-// ticks the add-on, a modal opens with everything on offer, she picks as many as
-// she likes, watches the time and price they add at the top, and confirms with
-// "הוסיפי לתור". Each chosen option then joins the appointment as a service of
-// its own ("קישוט – ציורי גלים"), so Moriya's calendar, the confirmation card and
-// the reschedule panel all list exactly what was picked.
+// The picker configs themselves live in js/treatments.js, shared with the admin
+// dashboard. Everything below drives the modal they open: the client ticks the
+// add-on, picks as many options as she likes, watches the time and price they
+// add at the top, and confirms with "הוסיפי לתור". Each chosen option then joins
+// the appointment as a service of its own ("קישוט – ציורי גלים").
 //
-// The whole mechanism is driven by this config: another add-on that works this
-// way needs an entry here and an .addon-row[data-type="picker"] row pointing at
-// it by key – no new markup or handlers of its own.
-//
-// An option carrying `priceLabel` is priced in person instead of on the site: its
-// price counts as 0 in the total, and the range shows wherever the total does.
-// `note` is shown while that option is picked; the picker's own `note` covers
-// every option that doesn't bring one, unless the option opts out with
-// `sharedNote: false`.
-const ADDON_PICKERS = {
-  deco: {
-    prefix:     'קישוט',
-    title:      'בחרי את הקישוטים',
-    subtitle:   'ניתן לבחור יותר מקישוט אחד · הזמן והמחיר יתווספו לתור',
-    editLabel:  'שינוי הקישוטים',
-    confirm:       'הוסיפי לתור ✓',
-    confirmUpdate: 'עדכני את הטיפול ✓',
-    emptyTime:  "10–15 דק'",
-    emptyPrice: '5–40 ₪',
-    // Priced per nail – which is why french, ombre and pearl powder, covering the
-    // whole hand for one price, opt out of it.
-    note: {
-      emoji: '💗',
-      tone:  'pink',
-      text:  'הקישוט מתומחר כאחד לכל ציפורן, במידה ותרצי יותר מאחד על כל ציפורן תיתכנה עלויות נוספות במועד התור'
-    },
-    options: [
-      { id: 'french', emoji: '🌸', name: 'פרנץ׳ קלאסי ואלגנטי',       time: 15, price: 20, sharedNote: false },
-      { id: 'ombre',  emoji: '🌈', name: 'מעבר אומברה מדורג ועדין',   time: 15, price: 20, sharedNote: false },
-      { id: 'pearl',  emoji: '🧚', name: 'אבקת פנינה',                time: 15, price: 15, sharedNote: false },
-      { id: 'waves',  emoji: '🌊', name: 'ציורי גלים',                time: 15, price: 15 },
-      { id: 'stones', emoji: '💎', name: 'אבנים דמוי יהלום מודבקות',  time: 10, price: 10 },
-      { id: 'custom', emoji: '🎨', name: 'עיצוב אישי',                time: 15, price: 0,
-        priceLabel: '5–40 ₪ (ייקבע בתור)', priceShort: '5–40 ₪',
-        note: { emoji: '💡', text: 'המחיר המדויק של הקישוט ייקבע בתור עצמו בהתאם לעיצוב שתבחרי' } },
-    ],
-  },
-};
+// Another add-on that works this way needs an entry in MoriyaTreatments.PICKERS
+// and an .addon-row[data-type="picker"] row pointing at it by key – no new
+// markup or handlers of its own.
+const ADDON_PICKERS = MoriyaTreatments.PICKERS;
+
+// The name a chosen option carries as a service, e.g. "קישוט – ציורי גלים".
+const pickerServiceName = MoriyaTreatments.pickerServiceName;
 
 // What the client has chosen in each picker, by picker key → option ids.
 const pickerChoice = {};
@@ -91,11 +59,6 @@ Object.keys(ADDON_PICKERS).forEach(key => {
   pickerChoice[key]     = [];
   pickerLastChoice[key] = [];
 });
-
-// The name a chosen option carries as a service, e.g. "קישוט – ציורי גלים".
-function pickerServiceName(cfg, opt) {
-  return cfg.prefix ? `${cfg.prefix} – ${opt.name}` : opt.name;
-}
 
 // The options currently chosen in a picker, in the order they are offered.
 function pickerChosenOptions(key) {
@@ -145,54 +108,14 @@ function noteBoxesHtml(notes) {
 }
 
 // Add-ons a client may add to / remove from an existing appointment while
-// rescheduling. Only the base treatment (gel polish / anatomic structure) stays
-// locked – every add-on is editable, and the changes sync to Moriya's calendar
-// on update. The `name` fields match the booking flow exactly so add-ons already
-// on the appointment map back onto these controls (pre-filled and removable).
-// `time`/`price` are per-unit; quantity rows multiply by the chosen count.
-//
-// A picker's options each get a checkbox of their own here, built from the very
-// same config the booking modal uses, so a decoration already on the appointment
-// maps back onto its own control instead of being locked away.
-function pickerRescheduleExtras(key) {
-  const cfg = ADDON_PICKERS[key];
-  if (!cfg) return [];
-  return cfg.options.map(o => {
-    const x = {
-      id: `${key}-${o.id}`, emoji: o.emoji, name: pickerServiceName(cfg, o),
-      desc: o.desc || '', type: 'checkbox', time: o.time, price: o.price
-    };
-    if (o.priceLabel) x.priceLabel = o.priceLabel;
-    return x;
-  });
-}
-
-const RESCHEDULE_EXTRAS = [
-  { id: 'double',  emoji: '💎', name: 'שתי שכבות בייס / אבקת אקריל',              desc: 'חיזוק נוסף לציפורניים',                        type: 'checkbox', time: 15, price: 20 },
-  ...pickerRescheduleExtras('deco'),
-  { id: 'polygel', emoji: '🔧', name: "השלמת ציפורן בטיפס ג'ל",                  desc: 'השלמת ציפורן שנשברה · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
-  { id: 'crack',   emoji: '🩹', name: 'תיקון סדק בציפורן',                       desc: 'תיקון מהיר לסדק · 5 ₪ ו-5 דק׳ לציפורן',       type: 'quantity', time: 5,  price: 5  },
-  { id: 'pincer',  emoji: '📐', name: 'תיקון מבנה נשרי לציפורן',                 desc: 'החזרת מבנה ישר לציפורן · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
-  { id: 'toolkit', emoji: '💼', name: 'סט כלים אישי',                            desc: 'סט כלים אישי הנשמר על שמך לטיפולים הבאים',      type: 'checkbox', time: 0,  price: 30 },
-];
-
-// Gel polish on the toes and its own add-ons – treatments booked alongside the
-// manicure, chosen on a page of their own (step 1B) between the manicure and the
-// calendar. Every one carries `separate: true`, so Moriya's calendar lists them
-// after the manicure behind "בנוסף,"; their time and price join the appointment
-// total like anything else, which is what keeps every calendar constraint (the
-// breaks, the 90-min grid, the 18:00 close) applying to them unchanged.
-// `requiresGel` mirrors step 1's data-requires-base: those two only make sense on
-// top of the polish itself, while the removal stands on its own. The names repeat
-// step 1's wording, so everything that matches a saved service back to a control
-// compares `separate` alongside the name.
-// Offered only to clients MoriyaAuth.canBookFeetGel() allows.
-const FEET_TREATMENTS = [
-  { id: 'feetgel',     emoji: '🦶', name: "לק ג'ל ברגליים",    desc: "מניקור עדין ומריחת לק ג'ל",                  checkId: 'chk-feet-gel',     type: 'checkbox', time: 60, price: 120, separate: true },
-  { id: 'feetdouble',  emoji: '💎', name: 'שתי שכבות בייס',     desc: 'חיזוק נוסף עם שכבת בייס כפולה',              checkId: 'chk-feet-double',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
-  { id: 'feetfrench',  emoji: '🌸', name: 'פרנץ׳',              desc: "אפקט פרנץ' קלאסי ואלגנטי",                   checkId: 'chk-feet-french',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
-  { id: 'feetremoval', emoji: '💧', name: 'הסרת לק ושיוף צורה', desc: 'הסרה מקצועית ועדינה של לק קיים ושיוף הצורה', checkId: 'chk-feet-removal', type: 'checkbox', time: 30, price: 50,  separate: true },
-];
+// rescheduling, and the feet treatments of step 1B – both from the shared
+// catalogue (js/treatments.js), so what she can add here, what step 1 offers and
+// what Moriya can put on a finished appointment are one list at one price.
+// Only the base treatment (gel polish / anatomic structure) stays locked on a
+// reschedule – every add-on is editable, and the changes sync to Moriya's
+// calendar on update.
+const RESCHEDULE_EXTRAS = MoriyaTreatments.RESCHEDULE_EXTRAS;
+const FEET_TREATMENTS   = MoriyaTreatments.FEET;
 
 function canBookFeetGel() {
   return !!(window.MoriyaAuth && MoriyaAuth.canBookFeetGel());
