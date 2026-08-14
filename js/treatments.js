@@ -125,7 +125,7 @@
   // service back to a control compares `separate` alongside the name.
   // Offered only to clients MoriyaAuth.canBookFeetGel() allows.
   const FEET = [
-    { id: 'feetgel',     emoji: '🦶', name: "לק ג'ל ברגליים",    desc: "מניקור עדין ומריחת לק ג'ל",                  checkId: 'chk-feet-gel',     type: 'checkbox', time: 60, price: 120, separate: true },
+    { id: 'feetgel',     emoji: '🦶', name: "לק ג'ל ברגליים",    desc: "מניקור עדין ומריחת לק ג'ל",                  checkId: 'chk-feet-gel',     type: 'checkbox', time: 60, price: 160, separate: true },
     { id: 'feetdouble',  emoji: '💎', name: 'שתי שכבות בייס',     desc: 'חיזוק נוסף עם שכבת בייס כפולה',              checkId: 'chk-feet-double',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
     { id: 'feetfrench',  emoji: '🌸', name: 'פרנץ׳',              desc: "אפקט פרנץ' קלאסי ואלגנטי",                   checkId: 'chk-feet-french',  type: 'checkbox', time: 15, price: 20,  separate: true, requiresGel: true },
     { id: 'feetremoval', emoji: '💧', name: 'הסרת לק ושיוף צורה', desc: 'הסרה מקצועית ועדינה של לק קיים ושיוף הצורה', checkId: 'chk-feet-removal', type: 'checkbox', time: 30, price: 50,  separate: true },
