@@ -1,0 +1,18 @@
+{
+  "name": "Moriya Nails",
+  "short_name": "Moriya Nails",
+  "lang": "he",
+  "dir": "rtl",
+  "start_url": "/",
+  "scope": "/",
+  "background_color": "#ffffff",
+  "theme_color": "#e85880",
+  "_comment_display": "Opened from the home screen the site keeps the browser's address bar. Standalone would strip it, and the Google sign-in that every booking goes through is unreliable inside that stripped-down window.",
+  "display": "browser",
+  "icons": [
+    { "src": "images/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "images/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any" },
+    { "src": "images/icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable" },
+    { "src": "images/icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ]
+}
