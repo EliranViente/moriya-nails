@@ -7,6 +7,12 @@ PORT = 8000
 
 
 class NoCacheHandler(http.server.SimpleHTTPRequestHandler):
+    # Python doesn't know this extension, and a manifest served as a plain
+    # download is one the browser ignores — so the home-screen icon would look
+    # right in production and be missing locally.
+    extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
+                      '.webmanifest': 'application/manifest+json'}
+
     def end_headers(self):
         self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0")
         self.send_header("Pragma", "no-cache")

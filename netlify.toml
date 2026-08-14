@@ -27,6 +27,14 @@
   to = "/.netlify/functions/delete-client"
   status = 200
 
+# ─── Home-screen manifest ───────────────────────────────────────────
+# Spelled out so the manifest can't go out as a plain download — a browser
+# ignores one that doesn't arrive as JSON, and the home-screen icon goes with it.
+[[headers]]
+  for = "/site.webmanifest"
+  [headers.values]
+    Content-Type = "application/manifest+json"
+
 # ─── Keep-alive: ping Supabase daily so the free-tier project never pauses ───
 # (a paused project stops resolving and breaks login). Runs at 06:00 UTC daily.
 [functions."keepalive"]
