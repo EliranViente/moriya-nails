@@ -1011,9 +1011,10 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
 .qty-btn {
   width: 36px;
   height: 36px;
+  flex-shrink: 0;
   background: var(--pink-50);
   border: none;
-  font-size: 1.2rem;
+  font-size: 19px; /* fixed px, not rem: stays inside its 36px circle at every accessibility-menu text size */
   color: var(--pink-500);
   cursor: pointer;
   font-weight: 700;
@@ -2033,11 +2034,12 @@ label.rx-row { cursor: pointer; }
   transform: translateY(-50%);
   width: 34px;
   height: 34px;
+  flex-shrink: 0;
   border-radius: 50%;
   border: none;
   background: rgba(255,255,255,0.85);
   color: var(--gray-800);
-  font-size: 1.4rem;
+  font-size: 22px; /* fixed px, not rem: stays inside its 34px circle at every accessibility-menu text size */
   line-height: 1;
   display: flex;
   align-items: center;
@@ -2375,7 +2377,7 @@ textarea:focus-visible,
   border: none;
   background: var(--pink-50);
   color: var(--gray-600);
-  font-size: 1rem;
+  font-size: 16px; /* fixed px, not rem: stays inside its 34px circle at every accessibility-menu text size */
   cursor: pointer;
   transition: background var(--transition);
 }
@@ -2743,4 +2745,272 @@ a, button, label, .nav-link, .time-slot, .cal-day, .qty-btn,
   .modal-card { padding: 26px 18px; max-height: 90dvh; -webkit-overflow-scrolling: touch; }
   .cdlg-card { padding: 26px 20px 20px; }
   .cdlg-actions { flex-direction: column-reverse; }
+}
+
+/* ═══════════════════════════════════════════
+   ACCESSIBILITY MENU (IS 5568 / WCAG 2.0 AA)
+   Widget markup is injected by js/accessibility.js; the mode classes below
+   (a11y-*) are toggled on <html> both by that script and, on repeat visits,
+   by the early-apply snippet in index.html's <head> so saved preferences
+   take effect before first paint.
+═══════════════════════════════════════════ */
+
+/* "Skip to main content" – invisible until it receives keyboard focus.
+   font-size is a fixed px (not rem) so it isn't pushed taller than its
+   -60px hidden offset by the "increase text" step below. */
+.skip-link {
+  position: fixed;
+  top: -60px;
+  right: 12px;
+  z-index: 6000;
+  background: var(--pink-500);
+  color: var(--white);
+  font-weight: 700;
+  font-size: 15px;
+  padding: 12px 20px;
+  border-radius: var(--radius-sm);
+  box-shadow: var(--shadow-md);
+  transition: top var(--transition);
+}
+.skip-link:focus {
+  top: 12px;
+}
+
+/* ── Floating toggle + panel ──
+   The widget's own font sizes below are fixed px, not rem: rem always
+   resolves against <html>'s font-size, which is exactly what the "increase
+   text" control inside this panel changes – so rem here would make the
+   panel's own buttons (fixed-size circles, single-glyph icons) grow past
+   their bounds and mangle their own layout as a user raises the site's text
+   size. Pinning them to px keeps the controls themselves stable at every
+   step, which is what every real-world accessibility widget does: the panel
+   that controls the zoom stays put while the page around it scales. */
+.a11y-widget {
+  position: fixed;
+  left: 20px;
+  bottom: calc(20px + env(safe-area-inset-bottom, 0px));
+  z-index: 3000;
+}
+.a11y-toggle {
+  width: 52px;
+  height: 52px;
+  border: none;
+  border-radius: 50%;
+  background: var(--pink-500);
+  color: var(--white);
+  box-shadow: var(--shadow-md);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: transform var(--transition), background var(--transition);
+}
+.a11y-toggle:hover { background: var(--pink-400); transform: scale(1.06); }
+.a11y-toggle svg { width: 28px; height: 28px; flex-shrink: 0; }
+
+.a11y-panel {
+  position: absolute;
+  bottom: 64px;
+  left: 0;
+  width: 280px;
+  max-height: calc(100vh - 110px);
+  overflow-y: auto;
+  background: var(--white);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-lg);
+  opacity: 0;
+  transform: translateY(10px);
+  transition: opacity var(--transition), transform var(--transition);
+  direction: rtl;
+}
+.a11y-panel.is-open { opacity: 1; transform: translateY(0); }
+
+.a11y-panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px 18px;
+  border-bottom: 1px solid var(--pink-100);
+}
+.a11y-panel-head h2 { font-size: 17px; font-weight: 800; color: var(--gray-800); }
+.a11y-close {
+  width: 30px;
+  height: 30px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: 50%;
+  background: var(--pink-50);
+  color: var(--gray-600);
+  font-size: 14px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.a11y-close:hover { background: var(--pink-100); color: var(--pink-500); }
+
+.a11y-panel-body {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px 16px;
+}
+.a11y-group { display: flex; flex-direction: column; gap: 6px; }
+.a11y-group-label { font-size: 13px; font-weight: 700; color: var(--gray-600); }
+.a11y-font-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--pink-50);
+  border-radius: var(--radius-sm);
+  padding: 6px 10px;
+}
+.a11y-font-btn {
+  width: 34px;
+  height: 34px;
+  flex-shrink: 0;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--pink-500);
+  font-weight: 800;
+  font-size: 16px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.a11y-font-btn:hover { background: var(--pink-100); }
+.a11y-font-level { font-weight: 700; color: var(--gray-700); font-size: 14px; }
+
+.a11y-toggle-btn {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 1.5px solid var(--pink-100);
+  border-radius: var(--radius-sm);
+  background: var(--white);
+  color: var(--gray-800);
+  font-family: var(--font);
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  text-align: right;
+  transition: background var(--transition), border-color var(--transition);
+}
+.a11y-toggle-btn:hover { background: var(--pink-50); }
+.a11y-toggle-btn.is-active {
+  background: var(--pink-500);
+  border-color: var(--pink-500);
+  color: var(--white);
+}
+.a11y-btn-icon { font-size: 16px; flex-shrink: 0; }
+
+.a11y-panel-foot {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px 16px 16px;
+  border-top: 1px solid var(--pink-100);
+}
+.a11y-reset,
+.a11y-statement-link {
+  width: 100%;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: 13px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: background var(--transition);
+}
+.a11y-reset {
+  border: 1.5px solid var(--pink-200);
+  background: var(--white);
+  color: var(--pink-500);
+}
+.a11y-reset:hover { background: var(--pink-50); }
+.a11y-statement-link {
+  border: none;
+  background: var(--pink-50);
+  color: var(--gray-700);
+  text-decoration: underline;
+}
+.a11y-statement-link:hover { background: var(--pink-100); }
+
+.a11y-statement-body { line-height: 1.8; color: var(--gray-700); font-size: 0.92rem; }
+.a11y-statement-body p { margin-bottom: 12px; }
+.a11y-statement-body ul { margin: 0 20px 12px; display: flex; flex-direction: column; gap: 6px; }
+.a11y-statement-contact { background: var(--pink-50); border-radius: var(--radius-sm); padding: 12px 14px; }
+.a11y-statement-contact a { color: var(--pink-500); font-weight: 700; }
+.a11y-statement-date { color: var(--gray-400); font-size: 0.82rem; }
+
+@media (max-width: 480px) {
+  .a11y-widget { left: 14px; bottom: calc(14px + env(safe-area-inset-bottom, 0px)); }
+  .a11y-panel { width: calc(100vw - 28px); max-width: 320px; }
+}
+
+/* ── Contrast modes ──
+   A filter-based invert/hue-rotate gives every element on the page (brand
+   gradients, inline SVG icons, custom components) a consistent dark high-
+   contrast look without re-skinning each one by hand. Photographic images
+   and video get inverted right back so they still look like photos, not
+   negatives. */
+.a11y-contrast-dark {
+  filter: invert(1) hue-rotate(180deg);
+}
+.a11y-contrast-dark img,
+.a11y-contrast-dark video {
+  filter: invert(1) hue-rotate(180deg);
+}
+.a11y-grayscale {
+  filter: grayscale(1);
+}
+
+/* ── Highlighted links & headings ── */
+.a11y-links-highlight a {
+  text-decoration: underline !important;
+  text-decoration-thickness: 2px !important;
+  text-underline-offset: 3px !important;
+}
+.a11y-headings-highlight h1,
+.a11y-headings-highlight h2,
+.a11y-headings-highlight h3,
+.a11y-headings-highlight h4 {
+  background: #fff3b0 !important;
+  color: #1a1a1a !important;
+  outline: 2px dashed #1a1a1a;
+  outline-offset: 2px;
+}
+
+/* ── Readable font: a plain, evenly-spaced typeface in place of the
+   decorative headline fonts, for visitors with dyslexia or low vision. ── */
+.a11y-readable-font :where(h1, h2, h3, h4, h5, h6, p, a, span, li, button, input, textarea, label, td, th) {
+  font-family: Arial, Helvetica, sans-serif !important;
+  letter-spacing: 0.01em !important;
+}
+.a11y-readable-font p,
+.a11y-readable-font li {
+  line-height: 1.9 !important;
+}
+
+/* ── Big cursor ── */
+.a11y-big-cursor,
+.a11y-big-cursor * {
+  cursor: url('data:image/svg+xml;utf8,<svg xmlns="http://www.w3.org/2000/svg" width="40" height="40" viewBox="0 0 24 24"><path d="M4 2l14 12-6 1 3 7-3 1-3-7-4 4z" fill="black" stroke="white" stroke-width="1.5" stroke-linejoin="round"/></svg>') 4 4, auto !important;
+}
+
+/* ── Stop animations ── */
+.a11y-no-motion,
+.a11y-no-motion * {
+  animation-play-state: paused !important;
+  animation-duration: 0.001s !important;
+  transition-duration: 0.001s !important;
+  scroll-behavior: auto !important;
 }

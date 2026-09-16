@@ -76,8 +76,42 @@
     });
   })();
   </script>
+
+  <!-- ──────────────── ACCESSIBILITY PREFERENCES – EARLY APPLY ──────────────── -->
+  <!-- Runs before the page paints so a returning visitor who turned on, say,
+       dark contrast or a bigger font never sees a flash of the untouched site
+       first (jarring in general, defeats the point for someone relying on it).
+       js/accessibility.js owns the actual widget UI and keeps this list of
+       classes/scale steps in sync – if one changes, update the other. -->
+  <script>
+  (function applySavedAccessibilityPrefs() {
+    const FONT_SCALE = [1, 1.125, 1.25, 1.375, 1.5];
+    try {
+      const raw = localStorage.getItem('moriyaA11y');
+      if (!raw) return;
+      const p = JSON.parse(raw);
+      const root = document.documentElement.classList;
+      if (p.contrast === 'dark') root.add('a11y-contrast-dark');
+      else if (p.contrast === 'gray') root.add('a11y-grayscale');
+      if (p.links) root.add('a11y-links-highlight');
+      if (p.readableFont) root.add('a11y-readable-font');
+      if (p.bigCursor) root.add('a11y-big-cursor');
+      if (p.noMotion) root.add('a11y-no-motion');
+      if (p.headings) root.add('a11y-headings-highlight');
+      const step = Number(p.fontStep) || 0;
+      if (step > 0 && step < FONT_SCALE.length) {
+        document.documentElement.style.fontSize = (16 * FONT_SCALE[step]) + 'px';
+      }
+    } catch (_) { /* storage blocked (private mode) – site just loads at defaults */ }
+  })();
+  </script>
 </head>
 <body>
+
+  <!-- Bypasses the nav for keyboard and screen-reader users so they aren't
+       forced through every nav link on each page load (IS 5568 / WCAG 2.4.1).
+       Hidden until it receives focus. -->
+  <a href="#home" class="skip-link">דלגי לתוכן הראשי</a>
 
   <!-- ──────────────── SCROLL-DRIVEN GEL TEASER ──────────────── -->
   <!-- A real (cut-out) hand pinned to the bottom-right corner across the whole
@@ -961,6 +995,7 @@
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="shared/calendar-text.js"></script>
+  <script src="js/accessibility.js"></script>
   <script src="js/auth.js"></script>
   <script src="js/ui.js"></script>
   <script src="js/schedule.js"></script>
