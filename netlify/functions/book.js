@@ -4,9 +4,13 @@
  */
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
+const { getUserFromToken, isAdminUser } = require('../../shared/admin-auth');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
+
+const SB_ENV = { url: process.env.SUPABASE_URL || '', key: process.env.SUPABASE_SERVICE_ROLE_KEY || '' };
+const URGENT_WINDOW_MS = 48 * 60 * 60 * 1000;
 
 function getAuth() {
   const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
@@ -30,9 +34,27 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, userId } = body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, userId, accessToken } = body;
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
+  }
+
+  // A slot less than 48h away must go through Moriya's approval flow (see
+  // js/app.js's booking submit handler, which skips this call entirely for an
+  // urgent request) — the only legitimate caller reaching here for such a slot
+  // is her own approval action in js/admin.js, which sends an admin accessToken.
+  // Without this, a direct POST to this endpoint could bypass the 48h rule
+  // client-side code alone can't enforce. The fixed +03:00 offset is an
+  // approximation (Israel is +02:00 outside DST) — fine for a coarse gate a
+  // couple of hours either side of the 48h line, unlike the wall-clock+timeZone
+  // approach used below for the event itself, which must be exact.
+  const requestedStart = new Date(`${date}T${time}:00+03:00`);
+  const isUrgent = (requestedStart.getTime() - Date.now()) < URGENT_WINDOW_MS;
+  if (isUrgent && SB_ENV.url && SB_ENV.key) {
+    const user = await getUserFromToken(SB_ENV, accessToken);
+    if (!isAdminUser(user)) {
+      return { statusCode: 403, headers, body: JSON.stringify({ error: 'too_soon_needs_approval' }) };
+    }
   }
 
   try {

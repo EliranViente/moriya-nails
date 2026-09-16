@@ -166,7 +166,15 @@ create table if not exists public.appointments (
   duration_min    int  not null,
   services        jsonb default '[]'::jsonb,
   total_price     numeric default 0,
-  status          text not null default 'booked',  -- booked | cancelled | done | no_show
+  -- booked | cancelled | done | no_show | pending_urgent_approval | rejected
+  -- pending_urgent_approval: client self-booked less than 48h out, no calendar
+  -- event exists yet — see netlify/functions/book.js. Distinct from the
+  -- unrelated 'pending_approval' status js/app.js's updateAppointment() sets
+  -- on an existing (already-calendared) appointment when >15 min are added.
+  -- rejected: an urgent request Moriya declined, or one that lost the
+  -- auto-reject race to a competing request for the same slot. Never reaches
+  -- the calendar.
+  status          text not null default 'booked',
   google_event_id text,
   notes           text,
   created_at      timestamptz default now()

@@ -10,6 +10,7 @@ const cors     = require('cors');
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
 const { deleteClient } = require('../shared/delete-client');
+const { getUserFromToken, isAdminUser } = require('../shared/admin-auth');
 
 const app = express();
 app.use(cors());
@@ -31,6 +32,9 @@ const TZ          = 'Asia/Jerusalem';
 const WORK_START  = 9;   // 09:00
 const WORK_END    = 17;  // 17:00
 
+const SB_ENV = { url: process.env.SUPABASE_URL || '', key: process.env.SUPABASE_SERVICE_ROLE_KEY || '' };
+const URGENT_WINDOW_MS = 48 * 60 * 60 * 1000;
+
 // Dedicated approval email (parity with the Netlify function). No-op locally when
 // RESEND_API_KEY isn't set; best-effort so it never breaks the calendar sync.
 async function sendApprovalEmail({ clientName, clientPhone, services, date, time, duration, addedMinutes, totalPrice, notes }) {
@@ -51,6 +55,29 @@ async function sendApprovalEmail({ clientName, clientPhone, services, date, time
     });
     if (!res.ok) console.warn('approval email failed:', res.status, await res.text().catch(() => ''));
   } catch (err) { console.warn('approval email error:', err.message); }
+}
+
+// Local twin of netlify/functions/manage-booking.js's sendUrgentApprovalEmail().
+async function sendUrgentApprovalEmail({ clientName, clientPhone, services, date, time, duration, totalPrice, notes }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to     = process.env.APPROVAL_EMAIL_TO || 'moriya681@gmail.com';
+  const from   = process.env.APPROVAL_EMAIL_FROM || 'Moriya Nails <onboarding@resend.dev>';
+  if (!apiKey) return;
+
+  const siteUrl = process.env.SITE_URL || 'http://localhost:8000';
+  const adminLink = `${siteUrl}/admin.html?pending=1`;
+  const serviceNames = (services || []).map(s => s.name).join(', ');
+  const html = `<div dir="rtl" style="font-family:Arial,sans-serif">🚨 בקשת תור דחופה ממתינה לאישורך — `
+    + `${clientName || 'לקוחה'}, ${date} ${time}, ${serviceNames || '—'} (משך ${duration} דק', ${totalPrice} ₪). `
+    + `לאישור/דחייה: <a href="${adminLink}">${adminLink}</a></div>`;
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ from, to: [to], subject: `🚨 בקשת תור דחופה ממתינה לאישור — ${clientName || 'לקוחה'} (${date})`, html })
+    });
+    if (!res.ok) console.warn('urgent approval email failed:', res.status, await res.text().catch(() => ''));
+  } catch (err) { console.warn('urgent approval email error:', err.message); }
 }
 
 // ─── Health check ──────────────────────────────────────────────────────────────
@@ -98,10 +125,24 @@ app.get('/api/busy-slots', async (req, res) => {
 // ─── POST /api/book ───────────────────────────────────────────────────────────
 // Creates a Google Calendar event for the appointment.
 app.post('/api/book', async (req, res) => {
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes } = req.body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, accessToken } = req.body;
 
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return res.status(400).json({ error: 'Missing required fields' });
+  }
+
+  // Parity with netlify/functions/book.js. Only enforced when Supabase is
+  // configured locally — otherwise this dev server stays "trusted", matching
+  // /api/manage-booking's existing local-dev convention below.
+  if (SB_ENV.url && SB_ENV.key) {
+    const requestedStart = new Date(`${date}T${time}:00+03:00`);
+    const isUrgent = (requestedStart.getTime() - Date.now()) < URGENT_WINDOW_MS;
+    if (isUrgent) {
+      const user = await getUserFromToken(SB_ENV, accessToken);
+      if (!isAdminUser(user)) {
+        return res.status(403).json({ error: 'too_soon_needs_approval' });
+      }
+    }
   }
 
   try {
@@ -145,8 +186,17 @@ app.post('/api/manage-booking', async (req, res) => {
   const { action, eventId, date, time, duration,
           services, totalPrice, clientName, clientPhone, notes,
           pendingApproval, addedMinutes } = req.body;
-  if (!action || !eventId) {
-    return res.status(400).json({ error: 'Missing action or eventId' });
+  if (!action) {
+    return res.status(400).json({ error: 'Missing action' });
+  }
+
+  if (action === 'notify-urgent') {
+    await sendUrgentApprovalEmail({ clientName, clientPhone, services, date, time, duration, totalPrice, notes });
+    return res.json({ success: true });
+  }
+
+  if (!eventId) {
+    return res.status(400).json({ error: 'Missing eventId' });
   }
 
   try {

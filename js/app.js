@@ -1376,30 +1376,41 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     ...state.addons
   ];
 
-  // 1) Create the Google Calendar event (existing backend)
+  // A slot less than 48h away doesn't go straight to the calendar — it waits
+  // for Moriya's approval (same threshold as the "התורים שלי" edit lock, see
+  // canEdit below). She approves or rejects it from the admin dashboard
+  // (js/admin.js adminApprove()/adminReject()), which is the only place that
+  // still creates the calendar event for a slot this close.
+  const requestedStart = new Date(`${state.selectedDate}T${state.selectedTime}`);
+  const isUrgent = (requestedStart.getTime() - Date.now()) < 48 * 60 * 60 * 1000;
+
+  // 1) Create the Google Calendar event now (existing backend) — skipped for
+  //    an urgent request, whose event is created only once approved.
   let googleEventId = null;
-  try {
-    const res = await fetch(`${API_BASE}/api/book`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date:        state.selectedDate,
-        time:        state.selectedTime,
-        duration:    state.totalTime,
-        clientName:  name,
-        clientPhone: phone,
-        notes,
-        services,
-        totalPrice:  state.totalPrice,
-        userId:      MoriyaAuth.user.id
-      })
-    });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      googleEventId = data.eventId || null;
+  if (!isUrgent) {
+    try {
+      const res = await fetch(`${API_BASE}/api/book`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date:        state.selectedDate,
+          time:        state.selectedTime,
+          duration:    state.totalTime,
+          clientName:  name,
+          clientPhone: phone,
+          notes,
+          services,
+          totalPrice:  state.totalPrice,
+          userId:      MoriyaAuth.user.id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        googleEventId = data.eventId || null;
+      }
+    } catch (err) {
+      console.warn('Calendar booking failed (demo mode?):', err.message);
     }
-  } catch (err) {
-    console.warn('Calendar booking failed (demo mode?):', err.message);
   }
 
   // 2) Save to Supabase (profile + appointment). Booking is gated on a session,
@@ -1427,7 +1438,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
       duration_min:    state.totalTime,
       services:        services,
       total_price:     state.totalPrice,
-      status:          'booked',
+      status:          isUrgent ? 'pending_urgent_approval' : 'booked',
       google_event_id: googleEventId,
       notes:           notes || null
     });
@@ -1449,7 +1460,30 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     return;
   }
 
-  showSuccess(name, phone, notes);
+  // Best-effort — must never block the success screen the client already earned.
+  if (isUrgent) {
+    try {
+      await fetch(`${API_BASE}/api/manage-booking`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          action:      'notify-urgent',
+          date:        state.selectedDate,
+          time:        state.selectedTime,
+          duration:    state.totalTime,
+          clientName:  name,
+          clientPhone: phone,
+          notes,
+          services,
+          totalPrice:  state.totalPrice
+        })
+      });
+    } catch (err) {
+      console.warn('Urgent approval notice failed:', err.message);
+    }
+  }
+
+  showSuccess(name, phone, notes, isUrgent);
 });
 
 // Format a 'YYYY-MM-DD' date as a friendly Hebrew string, e.g. "יום שישי, 27 ביוני 2026".
@@ -1462,9 +1496,14 @@ function formatHebrewDate(dateStr) {
 }
 
 // Fill the confirmation card with appointment details and show the success step.
-function renderSuccessCard({ heading, subtitle, treatments, duration, durationMinutes, price }) {
+// `isPending` is true for an urgent (<48h) request awaiting Moriya's approval:
+// there is no calendar event yet, so the "add to my calendar" link and the
+// wording that implies a set appointment are both hidden/adjusted for it.
+function renderSuccessCard({ heading, subtitle, treatments, duration, durationMinutes, price, isPending }) {
+  const iconEl     = document.getElementById('success-icon');
   const headingEl  = document.querySelector('#step-success h3');
   const subtitleEl = document.getElementById('success-subtitle');
+  if (iconEl)     iconEl.textContent     = isPending ? '⏳' : '🎉';
   if (headingEl)  headingEl.textContent  = heading;
   if (subtitleEl) subtitleEl.textContent = subtitle;
 
@@ -1477,7 +1516,17 @@ function renderSuccessCard({ heading, subtitle, treatments, duration, durationMi
   treatEl.innerHTML = treatments.map(t => `<span class="sc-treatment-item">${t}</span>`).join('');
 
   const gcalEl = document.getElementById('sc-gcal');
-  if (gcalEl) gcalEl.href = buildGoogleCalendarUrl(treatments, durationMinutes, price);
+  if (gcalEl) {
+    gcalEl.style.display = isPending ? 'none' : '';
+    if (!isPending) gcalEl.href = buildGoogleCalendarUrl(treatments, durationMinutes, price);
+  }
+
+  const noteTextEl = document.getElementById('success-time-note-text');
+  if (noteTextEl) {
+    noteTextEl.textContent = isPending
+      ? 'התור עדיין לא נכנס ליומן — תקבלי עדכון ברגע שמוריה תאשר או תדחה את הבקשה'
+      : 'שימי לב כי ייתכן שינוי קל בשעת התור, ותישלח על כך התראה מראש';
+  }
 
   showStep('success');
 }
@@ -1507,7 +1556,7 @@ function buildGoogleCalendarUrl(treatments, durationMinutes, priceText) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-function showSuccess(name, phone, notes) {
+function showSuccess(name, phone, notes, isPending) {
   const treatments = [
     ...(state.baseIncluded ? [state.baseName] : []),
     ...state.addons.map(a => a.name)
@@ -1516,12 +1565,15 @@ function showSuccess(name, phone, notes) {
 
   const hasInPersonPrice = state.addons.some(a => a.priceLabel);
   renderSuccessCard({
-    heading:    'התור נקבע בהצלחה!',
-    subtitle:   'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
+    heading:    isPending ? 'הבקשה לתור שלך נשלחה לאישור מוריה' : 'התור נקבע בהצלחה!',
+    subtitle:   isPending
+      ? 'בבקשה לתור של פחות מ-48 שעות מראש, נדרש את אישור מוריה בשביל לקבוע את התור. תקבלי עדכון בהקדם 💗'
+      : 'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
     treatments,
     duration:       formatDuration(state.totalTime),
     durationMinutes: state.totalTime,
-    price:      `${state.totalPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי (ייקבע בתור)' : ''}`
+    price:      `${state.totalPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי (ייקבע בתור)' : ''}`,
+    isPending
   });
 }
 
@@ -1626,19 +1678,36 @@ window.openMyAppointments = openMyAppointments;
 
 function renderApptsList(appts) {
   const list = document.getElementById('appts-list');
-  if (!appts.length) {
+
+  // An urgent request Moriya never got to before its own slot time passed is
+  // dropped here rather than shown — it never held the slot and never reached
+  // the calendar, and the admin dashboard reads the same one as cancelled
+  // (see effectiveStatus() in js/admin.js).
+  const visible = appts.filter(a => {
+    if (a.status !== 'pending_urgent_approval') return true;
+    return new Date(`${a.date}T${a.start_time}`).getTime() > Date.now();
+  });
+
+  if (!visible.length) {
     list.innerHTML = '<p class="appts-empty">אין לך תורים קרובים 💅<br/>ניתן לקבוע תור חדש בכל עת</p>';
     return;
   }
 
-  list.innerHTML = appts.map(a => {
+  list.innerHTML = visible.map(a => {
     const [Y, M, D]  = a.date.split('-');
     const dateLabel  = `${D}/${M}/${Y}`;
     const timeLabel  = (a.start_time || '').slice(0, 5);
     const start      = new Date(`${a.date}T${a.start_time}`);
     const canEdit    = (start.getTime() - Date.now()) > 48 * 60 * 60 * 1000; // up to 2 days before
     const svc        = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
-    const actions    = canEdit
+    // A pending/rejected urgent request has no calendar event, so it never
+    // offers the normal edit/cancel actions — those only apply once Moriya
+    // has decided (see js/admin.js adminApprove()/adminReject()).
+    const actions    = a.status === 'pending_urgent_approval'
+      ? `<span class="appt-locked">🕐 בקשה ממתינה לאישור מוריה</span>`
+      : a.status === 'rejected'
+      ? `<span class="appt-locked">הבקשה לא אושרה — ניתן לקבוע תור חדש</span>`
+      : canEdit
       ? `<button class="appt-btn edit"   data-id="${a.id}">שינוי</button>
          <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`
       : `<span class="appt-locked">לא ניתן לשנות (פחות מ-48 שעות)</span>`;
