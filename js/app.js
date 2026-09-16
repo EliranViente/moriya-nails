@@ -1636,12 +1636,12 @@ function renderApptsList(appts) {
     const dateLabel  = `${D}/${M}/${Y}`;
     const timeLabel  = (a.start_time || '').slice(0, 5);
     const start      = new Date(`${a.date}T${a.start_time}`);
-    const canEdit    = (start.getTime() - Date.now()) > 24 * 60 * 60 * 1000; // up to 1 day before
+    const canEdit    = (start.getTime() - Date.now()) > 48 * 60 * 60 * 1000; // up to 2 days before
     const svc        = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
     const actions    = canEdit
       ? `<button class="appt-btn edit"   data-id="${a.id}">שינוי</button>
          <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`
-      : `<span class="appt-locked">לא ניתן לשנות (פחות מ-24 שעות)</span>`;
+      : `<span class="appt-locked">לא ניתן לשנות (פחות מ-48 שעות)</span>`;
     return `
       <div class="appt-card">
         <div class="appt-info">
