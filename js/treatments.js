@@ -102,6 +102,7 @@
     { id: 'double',  emoji: '💎', name: 'שתי שכבות בייס / אבקת אקריל',       desc: 'חיזוק נוסף לציפורניים',                          type: 'checkbox', time: 15, price: 20 },
     ...pickerExtras('deco'),
     { id: 'removal', emoji: '💧', name: 'הסרת לק ושיוף צורה',                desc: 'הסרה מקצועית ועדינה של לק קיים ושיוף הצורה',     type: 'checkbox', time: 30, price: 50, rescheduleExtra: false },
+    { id: 'removal-extension', emoji: '🔨', name: 'הסרת בניה',                desc: 'הסרת בניית ציפורניים קודמת',                     type: 'checkbox', time: 15, price: 20, rescheduleExtra: false },
     { id: 'polygel', emoji: '🔧', name: "השלמת ציפורן בטיפס ג'ל",            desc: 'השלמת ציפורן שנשברה · 15 ₪ ו-10 דק׳ לציפורן',    type: 'quantity', time: 10, price: 15 },
     { id: 'crack',   emoji: '🩹', name: 'תיקון סדק בציפורן',                 desc: 'תיקון מהיר לסדק · 5 ₪ ו-5 דק׳ לציפורן',          type: 'quantity', time: 5,  price: 5  },
     { id: 'pincer',  emoji: '📐', name: 'תיקון מבנה נשרי לציפורן',           desc: 'החזרת מבנה ישר לציפורן · 15 ₪ ו-10 דק׳ לציפורן', type: 'quantity', time: 10, price: 15 },
