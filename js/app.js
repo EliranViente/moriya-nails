@@ -1098,18 +1098,26 @@ async function renderCalendar() {
     const isSelected = state.selectedDate === dateStr;
     const bookable   = candidate && !fullDates.has(dateStr);
 
+    // A full Friday (candidate, but every slot is taken) stays clickable —
+    // unlike a genuinely non-working day — so she can still reach it and join
+    // the waitlist via loadTimeSlots()'s empty-state CTA, instead of a full
+    // day looking and behaving exactly like a Tuesday.
+    const isFull = candidate && !bookable;
     let cls = 'cal-day';
-    if (!bookable) {
-      cls += isPast ? ' past' : isBeyond ? ' beyond-horizon' : ' not-friday';
-    } else {
+    if (bookable) {
       cls += ' friday-avail';
       if (isSelected) cls += ' selected';
+    } else if (isFull) {
+      cls += ' friday-full';
+      if (isSelected) cls += ' selected';
+    } else {
+      cls += isPast ? ' past' : isBeyond ? ' beyond-horizon' : ' not-friday';
     }
 
-    const dataAttr = bookable ? `data-date="${dateStr}"` : '';
+    const dataAttr = (bookable || isFull) ? `data-date="${dateStr}"` : '';
     let title = '';
-    if (isBeyond)                    title = ' title="ניתן לקבוע תורים עד חודשיים מראש"';
-    else if (candidate && !bookable) title = ' title="אין שעות פנויות ביום זה"';
+    if (isBeyond) title = ' title="ניתן לקבוע תורים עד חודשיים מראש"';
+    else if (isFull) title = ' title="אין שעות פנויות ביום זה — אפשר להצטרף לרשימת המתנה"';
     html += `<div class="${cls}" ${dataAttr}${title}>${day}</div>`;
   }
 
@@ -1133,7 +1141,7 @@ async function renderCalendar() {
     renderCalendar();
   });
 
-  box.querySelectorAll('.friday-avail').forEach(cell => {
+  box.querySelectorAll('.friday-avail, .friday-full').forEach(cell => {
     cell.addEventListener('click', () => {
       state.selectedDate = cell.dataset.date;
       state.selectedTime = null;
@@ -1192,7 +1200,7 @@ async function loadTimeSlots(dateStr) {
   busySlots = carveOwnAppointment(dateStr, busySlots).concat(ownBusy);
   const dayWindows = await getDayWindows(dateStr);
   const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr, dayWindows);
-  renderSlots(slots, slotsGrid);
+  renderSlots(slots, slotsGrid, dateStr);
 }
 
 // ─── Dynamic slot generation ──────────────────────────────────────────────────
@@ -1228,9 +1236,12 @@ function renderSameDayNote(message) {
   note.innerHTML = message;
 }
 
-function renderSlots(slots, container) {
+function renderSlots(slots, container, dateStr) {
   if (slots.length === 0) {
-    container.innerHTML = '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>נסי לבחור יום שישי אחר</div>';
+    container.innerHTML = '<div class="no-slots">אין שעות פנויות ביום זה 😔<br/>נסי לבחור יום שישי אחר</div>' +
+      '<button type="button" class="waitlist-cta" id="waitlist-cta">🔔 הודיעו לי אם יתפנה תור</button>';
+    const btn = document.getElementById('waitlist-cta');
+    if (btn && dateStr) btn.addEventListener('click', () => joinWaitlist(dateStr));
     return;
   }
   // Every slot returned by the dynamic generator is bookable.
@@ -1835,8 +1846,49 @@ async function openMyAppointments() {
 
   if (error) { list.innerHTML = '<p class="appts-empty">שגיאה בטעינת התורים 😔</p>'; return; }
   renderApptsList(data || []);
+  renderMyWaitlist();
 }
 window.openMyAppointments = openMyAppointments;
+
+// Her own active waitlist registrations, appended below the appointments list
+// (renderApptsList already replaced #appts-list's content, so this runs after).
+async function renderMyWaitlist() {
+  const list = document.getElementById('appts-list');
+  if (!list) return;
+  const { data, error } = await MoriyaAuth.sb
+    .from('waitlist')
+    .select('id, date')
+    .eq('user_id', MoriyaAuth.user.id)
+    .eq('status', 'waiting')
+    .gte('date', localTodayStr())
+    .order('date', { ascending: true });
+  if (error || !data || !data.length) return;
+
+  const rows = data.map(w => {
+    const [Y, M, D] = w.date.split('-');
+    return `
+      <div class="appt-card waitlist-card">
+        <div class="appt-info">
+          <strong class="appt-when">🔔 ${D}/${M}/${Y}</strong>
+          <span class="appt-svc">ברשימת המתנה — נודיע לך אם יתפנה תור</span>
+        </div>
+        <div class="appt-actions">
+          <button class="appt-btn cancel" data-waitlist-id="${w.id}">ביטול הרשמה</button>
+        </div>
+      </div>`;
+  }).join('');
+  list.insertAdjacentHTML('beforeend', `<div class="waitlist-section">${rows}</div>`);
+
+  list.querySelectorAll('[data-waitlist-id]').forEach(b =>
+    b.addEventListener('click', () => cancelWaitlistEntry(b.dataset.waitlistId)));
+}
+
+async function cancelWaitlistEntry(id) {
+  try {
+    await MoriyaAuth.sb.from('waitlist').update({ status: 'cancelled' }).eq('id', id);
+  } catch (e) { console.warn('waitlist cancel failed:', e.message); }
+  openMyAppointments();
+}
 
 function renderApptsList(appts) {
   const list = document.getElementById('appts-list');
@@ -1915,8 +1967,79 @@ async function cancelAppointment(id, appts) {
     await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
     // The freed slot should show as available again on the next calendar view.
     if (appt) busySlotsCache.delete(appt.date);
+    // Someone may be waiting for this exact date — best-effort, never blocks.
+    fetch(`${API_BASE}/api/waitlist-notify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: appt && appt.date })
+    }).catch(() => {});
   } catch (e) { console.warn('cancel failed:', e.message); }
   openMyAppointments();
+}
+
+// ─── Waitlist (Phase 1) — register interest in a fully-booked Friday ─────────
+// No slot is reserved: this only tells Moriya someone wants a slot on this
+// date, via an email once one opens (see netlify/functions/waitlist-notify.js
+// and js/admin.js's manual "הודיעי ללקוחה" button).
+async function joinWaitlist(dateStr) {
+  if (!canBook()) return;
+  const [y, m, d] = dateStr.split('-');
+  const dateLabel = `${d}/${m}/${y}`;
+
+  try {
+    const { data: existing } = await MoriyaAuth.sb.from('waitlist')
+      .select('id').eq('user_id', MoriyaAuth.user.id).eq('date', dateStr)
+      .eq('status', 'waiting').maybeSingle();
+    if (existing) {
+      await confirmDialog({
+        icon: '💌', title: 'כבר נרשמת!',
+        message: 'כבר נרשמת לרשימת ההמתנה ליום הזה 🙌',
+        confirmText: 'הבנתי', cancelText: 'סגירה',
+      });
+      return;
+    }
+  } catch (e) { console.warn('waitlist check failed:', e.message); return; }
+
+  const ok = await confirmDialog({
+    icon:        '🔔',
+    title:       'להצטרף לרשימת ההמתנה?',
+    message:     `נודיע למוריה שאת מעוניינת בתור ביום שישי ה-${dateLabel}. אם יתפנה תור באותו יום, היא תשלח לך הודעה בוואטסאפ.`,
+    confirmText: 'כן, הודיעו לי',
+    cancelText:  'לא עכשיו',
+    tone:        'default',
+  });
+  if (!ok) return;
+
+  const { error } = await MoriyaAuth.sb.from('waitlist').insert({
+    user_id:      MoriyaAuth.user.id,
+    client_name:  MoriyaAuth.displayName(),
+    client_phone: (MoriyaAuth.profile && MoriyaAuth.profile.phone) || '',
+    date:         dateStr,
+    status:       'waiting',
+  });
+  if (error) {
+    // 23505 = unique_violation — she registered from another tab a moment ago.
+    if (error.code === '23505') {
+      await confirmDialog({
+        icon: '💌', title: 'כבר נרשמת!',
+        message: 'כבר נרשמת לרשימת ההמתנה ליום הזה 🙌',
+        confirmText: 'הבנתי', cancelText: 'סגירה',
+      });
+    } else {
+      console.warn('waitlist signup failed:', error.message);
+    }
+    return;
+  }
+
+  await confirmDialog({
+    icon:  '💌',
+    title: 'נרשמת לרשימת ההמתנה!',
+    html:  `נרשמת לרשימת ההמתנה ליום שישי ה-${dateLabel} 💌<br/>
+            אם יתפנה תור באותו יום, מוריה תשלח לך הודעה בוואטסאפ.<br/><br/>
+            <span style="color:#999;font-size:13px">שימי לב: ההרשמה לא שומרת לך תור — זו רק התראה שתקבלי ראשונה 🙏</span>`,
+    confirmText: 'הבנתי 💕',
+    cancelText:  'סגירה',
+    tone:        'default',
+  });
 }
 
 function startReschedule(id, appts) {
@@ -2246,6 +2369,11 @@ async function updateAppointment() {
     // Both the old date (now freed) and the new one (now taken) need a fresh read.
     busySlotsCache.delete(editingAppointment.date);
     busySlotsCache.delete(state.selectedDate);
+    // The old date may have opened a slot someone's waiting for — best-effort.
+    fetch(`${API_BASE}/api/waitlist-notify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: editingAppointment.date })
+    }).catch(() => {});
   } catch (e) { console.warn('update failed:', e.message); }
 
   const svc = mergedServices.map(s => s.name);

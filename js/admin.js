@@ -185,6 +185,29 @@ const sendCancelNotice   = id => openNotice(id, cancelNoticeText);
 const sendDeclineNotice  = id => openNotice(id, declineText);
 const sendApprovedNotice = id => openNotice(id, approvedText);
 
+// ─── Waitlist (Phase 1) ────────────────────────────────────────────────────
+// No slot is held for anyone — the message just tells her to hurry, since
+// whoever books first through the normal flow gets it.
+function waitlistNoticeText(w) {
+  return [
+    `שלום ${w.client_name} ${EMO.heart}`,
+    ``,
+    `התפנה תור ביום שישי ${fmtDate(w.date)} ב-Moriya Nails ${EMO.polish}`,
+    ``,
+    `כדאי למהר ולקבוע כדי להספיק את השעה הנוחה לך`,
+    ``,
+    SITE_URL,
+  ].join('\n');
+}
+
+function sendWaitlistNotice(id) {
+  const w = dash.waitlist.find(x => String(x.id) === String(id));
+  if (!w) return;
+  const url = waLink(w, waitlistNoticeText(w));
+  if (!url) { alert('אין מספר טלפון תקין ללקוחה זו 🙈'); return; }
+  window.open(url, '_blank', 'noopener');
+}
+
 // Offered the moment the cancellation goes through, while Moriya is still on it.
 async function offerCancelNotice(appt) {
   if (!waPhone(appt.client_phone)) return;
@@ -288,6 +311,7 @@ const dash = {
   treatments: [],      // raw rows from the `treatments` table (admin overrides/additions)
   tcEditing: false,    // treatment catalogue edit mode
   reviews: [],         // raw rows from the `reviews` table (client reviews, newest edit first)
+  waitlist: [],        // active ('waiting') rows from the `waitlist` table
   chartRange: 30,
   apptFilter: 'upcoming',   // 'upcoming' | 'pending' | 'done' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
@@ -318,14 +342,19 @@ async function initDashboard() {
   if (new URLSearchParams(location.search).get('pending') === '1') {
     activateApptFilter('pending');
   }
+  // Same idea for the waitlist-match email (?waitlist=1) — jump straight to
+  // the waitlist section, a standalone block rather than a filter tab.
+  const jumpToWaitlist = new URLSearchParams(location.search).get('waitlist') === '1';
 
-  await Promise.all([loadAppointments(), loadClients(), loadTreatments(), loadReviews()]);
+  await Promise.all([loadAppointments(), loadClients(), loadTreatments(), loadReviews(), loadWaitlist()]);
   renderKPIs();
   renderCharts();
   renderAppointments();
   renderClients();
   renderReviewsAdmin();
   renderTreatmentsEditor();
+  renderWaitlist();
+  if (jumpToWaitlist) document.getElementById('admin-waitlist')?.scrollIntoView();
   populateTimeSelects();
   wireAvailabilityEditor();
   wireControls();
@@ -932,6 +961,69 @@ async function loadReviews() {
     .order('updated_at', { ascending: false });
   if (error) { console.warn('loadReviews:', error.message); dash.reviews = []; return; }
   dash.reviews = data || [];
+}
+
+async function loadWaitlist() {
+  const { data, error } = await MoriyaAuth.sb
+    .from('waitlist')
+    .select('*')
+    .eq('status', 'waiting')
+    .order('date', { ascending: true })
+    .order('created_at', { ascending: true });
+  if (error) { console.warn('loadWaitlist:', error.message); dash.waitlist = []; return; }
+  dash.waitlist = data || [];
+}
+
+// One group per waitlisted date, each showing whether a slot is open right
+// now (recomputed live from dash.appointments + that date's availability
+// rows — cheap here since this is a manually-viewed page, not a hot path —
+// rather than trusting a stored flag that could drift) and the ordered
+// (FIFO by signup) list of waiting clients, each with a manual WhatsApp
+// button enabled only when that date currently has an open slot.
+async function renderWaitlist() {
+  const box = document.getElementById('admin-waitlist');
+  if (!box) return;
+
+  if (!dash.waitlist.length) {
+    box.innerHTML = '<p class="avail-empty">אין כרגע אף אחת ברשימת ההמתנה.</p>';
+    return;
+  }
+
+  const dates = [...new Set(dash.waitlist.map(w => w.date))];
+  const openByDate = {};
+  await Promise.all(dates.map(async date => {
+    const { data: rows } = await MoriyaAuth.sb.from('availability').select('*').eq('date', date);
+    const day  = MoriyaSchedule.readRows(rows || []);
+    const busy = dash.appointments
+      .filter(a => a.date === date && occupiesSlot(a))
+      .map(a => {
+        const s = toMin((a.start_time || '00:00').slice(0, 5));
+        return { start: s, end: s + (Number(a.duration_min) || 0) };
+      });
+    openByDate[date] = MoriyaSchedule.availableStarts(75, date, day, busy);
+  }));
+
+  box.innerHTML = dates.map(date => {
+    const open = openByDate[date] || [];
+    const openLabel = open.length
+      ? `🔔 יש תור פנוי! (${open.map(fromMin).join(', ')})`
+      : 'אין כרגע תור פנוי';
+    const rows = dash.waitlist.filter(w => w.date === date).map(w => `
+      <div class="wl-row">
+        <span class="wl-name">${w.client_name}</span>
+        <span class="wl-phone">${w.client_phone || ''}</span>
+        <span class="wl-since">נרשמה ב-${fmtDate((w.created_at || '').slice(0, 10))}</span>
+        <button class="appt-btn" data-wl-id="${w.id}" ${open.length ? '' : 'disabled'}>💬 הודיעי ללקוחה</button>
+      </div>`).join('');
+    return `
+      <div class="wl-date-group">
+        <h4>${dowLabel(date)} · ${fmtDate(date)} — <span class="${open.length ? 'wl-open' : 'wl-closed'}">${openLabel}</span></h4>
+        ${rows}
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('[data-wl-id]').forEach(b =>
+    b.addEventListener('click', () => sendWaitlistNotice(b.dataset.wlId)));
 }
 
 function reviewStarsMarkup(rating) {
@@ -2566,8 +2658,14 @@ async function adminCancel(id) {
   appt.status = 'cancelled';
   if (!calOk) alert('התור בוטל במערכת, אך ייתכן שלא הוסר מיומן Google — כדאי לבדוק ידנית.');
 
+  // Someone may be waiting for this exact date — best-effort, never blocks.
+  fetch(`${API_BASE}/api/waitlist-notify`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date: appt.date })
+  }).catch(() => {});
+
   cancelledAppts.add(String(appt.id));
-  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView(); renderWaitlist();
   offerCancelNotice(appt);
 }
 
@@ -2907,6 +3005,7 @@ async function saveReschedule() {
     }
   } catch (e) { calOk = false; console.warn('calendar update failed:', e.message); }
 
+  const oldDate = reschedTarget.date;
   const { error } = await MoriyaAuth.sb.from('appointments')
     .update({ date, start_time: time }).eq('id', reschedTarget.id);
 
@@ -2914,10 +3013,18 @@ async function saveReschedule() {
   if (error) { fb.textContent = 'העדכון נכשל: ' + error.message; fb.className = 'avail-feedback err'; return; }
   reschedTarget.date = date; reschedTarget.start_time = time;
 
+  // The vacated old date may have opened a slot someone's waiting for.
+  if (oldDate !== date) {
+    fetch(`${API_BASE}/api/waitlist-notify`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ date: oldDate })
+    }).catch(() => {});
+  }
+
   if (!calOk) alert('התור עודכן במערכת, אך ייתכן שלא עודכן ביומן Google — כדאי לבדוק ידנית.');
   movedAppts.add(String(reschedTarget.id));
   showReschedDone(reschedTarget);
-  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView(); renderWaitlist();
 }
 
 // The move is saved; now offer the one thing only Moriya can do — tell her.

@@ -278,7 +278,32 @@ from (
 where p.id = sub.user_id;
 
 -- ============================================================
---  4) TREATMENTS – admin overrides/additions on top of the built-in catalogue
+--  4) WAITLIST – Phase 1: a client registers interest in a fully-booked
+--     Friday. When a slot on that date opens up (any cancellation/reschedule),
+--     netlify/functions/waitlist-notify.js emails the admin the currently-open
+--     times plus the ordered (created_at) list of not-yet-notified waiters for
+--     that date, and stamps notified_at so each entry is only ever emailed
+--     once. No slot is reserved for anyone – see js/admin.js's manual
+--     "הודיעי ללקוחה" button. Phase 2 (a real timed hold) may replace this.
+-- ============================================================
+create table if not exists public.waitlist (
+  id           uuid primary key default gen_random_uuid(),
+  user_id      uuid not null references auth.users(id) on delete cascade,
+  client_name  text not null,
+  client_phone text not null,
+  date         date not null,
+  -- waiting | notified | cancelled
+  status       text not null default 'waiting',
+  notified_at  timestamptz,
+  created_at   timestamptz default now()
+);
+-- At most one active registration per client per date.
+create unique index if not exists idx_waitlist_active_unique
+  on public.waitlist(user_id, date) where status = 'waiting';
+create index if not exists idx_waitlist_date on public.waitlist(date);
+
+-- ============================================================
+--  5) TREATMENTS – admin overrides/additions on top of the built-in catalogue
 --     The base catalogue (base treatments, hand add-ons, feet add-ons, the
 --     קישוט picker's options) lives in js/treatments.js. A row here either
 --     patches an existing entry by id ('override'/'deco_option' with that id),
@@ -301,7 +326,7 @@ create table if not exists public.treatments (
 );
 
 -- ============================================================
---  5) REVIEWS – one general review per client about the salon/treatment,
+--  6) REVIEWS – one general review per client about the salon/treatment,
 --     not tied to any specific appointment. Shown on the public site below
 --     the gallery. A client may write and later edit her own review (upsert
 --     on user_id); the admin can hide/restore or delete any review. Writing
@@ -347,6 +372,7 @@ alter table public.availability enable row level security;
 alter table public.treatments   enable row level security;
 alter table public.appointments enable row level security;
 alter table public.reviews      enable row level security;
+alter table public.waitlist     enable row level security;
 
 -- ----- PROFILES -----
 drop policy if exists "profiles_select" on public.profiles;
@@ -445,6 +471,25 @@ drop policy if exists "reviews_delete" on public.reviews;
 create policy "reviews_delete" on public.reviews
   for delete using (user_id = auth.uid() or public.is_admin());
 
+-- ----- WAITLIST -----
+-- A client sees/creates only her own registrations; admin sees all. Self-
+-- cancel is a status flip to 'cancelled' (see appointments_update above for
+-- the same pattern), and the admin also updates status/notified_at from the
+-- dashboard, so both are covered by one permissive "own or admin" policy.
+-- No delete policy – rows are never removed, only soft-cancelled.
+drop policy if exists "waitlist_select_own" on public.waitlist;
+create policy "waitlist_select_own" on public.waitlist
+  for select using (user_id = auth.uid() or public.is_admin());
+
+drop policy if exists "waitlist_insert_own" on public.waitlist;
+create policy "waitlist_insert_own" on public.waitlist
+  for insert with check (user_id = auth.uid());
+
+drop policy if exists "waitlist_update_own" on public.waitlist;
+create policy "waitlist_update_own" on public.waitlist
+  for update using (user_id = auth.uid() or public.is_admin())
+  with check (user_id = auth.uid() or public.is_admin());
+
 -- ============================================================
 --  CLIENTS REPORT – one readable row per client
 --  View it any time:  select * from public.clients_report;
@@ -476,6 +521,6 @@ group by p.id
 order by p.last_appointment desc nulls last;
 
 -- ============================================================
---  Done. Tables: profiles, availability, appointments, treatments, reviews.
---  View: clients_report.
+--  Done. Tables: profiles, availability, appointments, waitlist, treatments,
+--  reviews. View: clients_report.
 -- ============================================================

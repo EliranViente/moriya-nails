@@ -27,6 +27,11 @@
   to = "/.netlify/functions/delete-client"
   status = 200
 
+[[redirects]]
+  from = "/api/waitlist-notify"
+  to = "/.netlify/functions/waitlist-notify"
+  status = 200
+
 # ─── Home-screen manifest ───────────────────────────────────────────
 # Spelled out so the manifest can't go out as a plain download — a browser
 # ignores one that doesn't arrive as JSON, and the home-screen icon goes with it.

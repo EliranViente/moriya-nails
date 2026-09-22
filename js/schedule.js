@@ -258,10 +258,14 @@
     return items.sort((a, b) => a.start - b.start || a.end - b.end);
   }
 
-  window.MoriyaSchedule = {
+  const api = {
     FRIDAY_BANDS, NOMINAL_SLOT,
     toMin, fromMin, isFriday, mergeIntervals, fridayBand,
     readRows, openWindows, usesDefaults, dayBreaks,
     walkWindow, anchors, availableStarts, dayTimeline,
   };
+  // Loaded in the browser (window) and, for waitlist-notify.js, under Node
+  // (module.exports) — same file, same math, so the two never drift apart.
+  if (typeof module !== 'undefined' && module.exports) module.exports = api;
+  else window.MoriyaSchedule = api;
 })();

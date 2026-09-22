@@ -1249,6 +1249,20 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   background: var(--pink-100);
   border-color: var(--pink-300);
 }
+/* A real working Friday with zero open slots — still clickable (unlike a
+   plain non-working day) so she can reach the waitlist CTA, but styled to
+   read as "full" rather than "available". */
+.cal-day.friday-full {
+  font-weight: 700;
+  color: var(--gray-400);
+  background: var(--gray-50);
+  cursor: pointer;
+  border: 1.5px dashed var(--gray-100);
+}
+.cal-day.friday-full:hover {
+  background: var(--pink-50);
+  border-color: var(--pink-200);
+}
 .cal-day.selected {
   background: linear-gradient(135deg, var(--pink-400), var(--pink-500)) !important;
   color: var(--white) !important;
@@ -1366,6 +1380,23 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   font-size: 0.9rem;
   padding: 20px;
 }
+
+.waitlist-cta {
+  grid-column: 1/-1;
+  display: block;
+  margin: 0 auto 20px;
+  padding: 10px 20px;
+  border-radius: var(--radius-xl);
+  font-family: var(--font);
+  font-weight: 600;
+  font-size: 0.85rem;
+  color: var(--pink-500);
+  background: var(--pink-50);
+  border: 1.5px solid var(--pink-200);
+  cursor: pointer;
+  transition: all var(--transition);
+}
+.waitlist-cta:hover { background: var(--pink-100); border-color: var(--pink-300); }
 
 /* ── FORM ── */
 .form-grid {
@@ -2622,6 +2653,8 @@ textarea:focus-visible,
   color: var(--gray-600);
 }
 .appt-btn.cancel:hover { border-color: #e53e3e; color: #e53e3e; }
+.waitlist-section { display: flex; flex-direction: column; gap: 10px; margin-top: 14px; }
+.waitlist-card { background: var(--pink-50); border-style: dashed; }
 .appt-locked {
   font-size: 0.78rem;
   color: var(--gray-400);
