@@ -70,7 +70,13 @@ const EMO = {
   pin:      '\u{1F4CD}',                          // 📍
   parking:  '\u{1F17F}\u{FE0F}',                  // 🅿️
   sparkH:   '\u{1F497}',                          // 💗
+  star:     '\u{2B50}',                           // ⭐
 };
+
+// Opens the site's reviews section and its write/edit modal directly –
+// see js/reviews.js's deep-link handling.
+const SITE_URL = 'https://moriya-nails.netlify.app';
+const REVIEW_LINK = `${SITE_URL}/?review=1#reviews`;
 
 // A warm, on-brand reminder message carrying the appointment's details.
 function reminderText(appt) {
@@ -89,6 +95,8 @@ function reminderText(appt) {
     ``,
     `${EMO.pin} ${VENUE_ADDR}`,
     `${EMO.parking} הגעה וחניה: ${VENUE_MAPS}`,
+    ``,
+    `${EMO.star} רוצה להשאיר חוות דעת על הטיפול שקיבלת? כרגע אפשר: ${REVIEW_LINK}`,
     ``,
     `מחכה לראות אותך ${EMO.sparkH}`,
   ].join('\n');
@@ -279,6 +287,7 @@ const dash = {
   clientsEditing: false,  // edit mode: permissions and removal are live only while on
   treatments: [],      // raw rows from the `treatments` table (admin overrides/additions)
   tcEditing: false,    // treatment catalogue edit mode
+  reviews: [],         // raw rows from the `reviews` table (client reviews, newest edit first)
   chartRange: 30,
   apptFilter: 'upcoming',   // 'upcoming' | 'pending' | 'done' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
@@ -310,11 +319,12 @@ async function initDashboard() {
     activateApptFilter('pending');
   }
 
-  await Promise.all([loadAppointments(), loadClients(), loadTreatments()]);
+  await Promise.all([loadAppointments(), loadClients(), loadTreatments(), loadReviews()]);
   renderKPIs();
   renderCharts();
   renderAppointments();
   renderClients();
+  renderReviewsAdmin();
   renderTreatmentsEditor();
   populateTimeSelects();
   wireAvailabilityEditor();
@@ -905,6 +915,87 @@ async function loadClients() {
   if (error) { console.warn('loadClients:', error.message); dash.clients = []; }
   else dash.clients = data || [];
   dash.clientsCount = dash.clients.length;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  REVIEWS MODERATION
+//  General reviews clients leave about the salon/treatment (not tied to a
+//  specific appointment – see the `reviews` table in supabase/schema.sql).
+//  Hiding sets status='hidden' (reversible); delete removes the row for good.
+// ═══════════════════════════════════════════════════════════════════════════
+
+async function loadReviews() {
+  const { data, error } = await MoriyaAuth.sb
+    .from('reviews')
+    .select('id, client_name, rating, body, status, updated_at')
+    .order('updated_at', { ascending: false });
+  if (error) { console.warn('loadReviews:', error.message); dash.reviews = []; return; }
+  dash.reviews = data || [];
+}
+
+function reviewStarsMarkup(rating) {
+  let out = '';
+  for (let i = 1; i <= 5; i++) out += `<span class="star${i <= rating ? ' filled' : ''}">★</span>`;
+  return out;
+}
+
+function renderReviewsAdmin() {
+  const box = document.getElementById('admin-reviews-list');
+  if (!box) return;
+
+  if (!dash.reviews.length) {
+    box.innerHTML = '<p class="clients-loading">עדיין אין חוות דעת</p>';
+    return;
+  }
+
+  box.innerHTML = dash.reviews.map(r => {
+    const hidden = r.status === 'hidden';
+    return `
+      <div class="admin-review-row${hidden ? ' is-hidden' : ''}" data-id="${escAttr(r.id)}">
+        <div class="admin-review-main">
+          <div class="admin-review-head">
+            <span class="admin-review-name">${escAttr(r.client_name)}</span>
+            <span class="admin-review-date">${fmtDate(r.updated_at.slice(0, 10))}</span>
+            <span class="stars">${reviewStarsMarkup(r.rating)}</span>
+            <span class="admin-review-status${hidden ? ' hidden' : ''}">${hidden ? 'מוסתרת' : 'גלויה'}</span>
+          </div>
+          ${r.body ? `<p class="admin-review-body">${escAttr(r.body)}</p>` : ''}
+        </div>
+        <div class="tc-actions">
+          ${hidden
+            ? `<button type="button" class="tc-restore-btn" title="הצגה">↩️</button>`
+            : `<button type="button" class="tc-hide-btn" title="הסתרה">🙈</button>`}
+          <button type="button" class="tc-del-btn" title="מחיקה לצמיתות">🗑</button>
+        </div>
+      </div>`;
+  }).join('');
+
+  box.querySelectorAll('.admin-review-row').forEach(row => {
+    const id = row.dataset.id;
+    row.querySelector('.tc-hide-btn')?.addEventListener('click', () => setReviewStatus(id, 'hidden'));
+    row.querySelector('.tc-restore-btn')?.addEventListener('click', () => setReviewStatus(id, 'visible'));
+    row.querySelector('.tc-del-btn')?.addEventListener('click', () => deleteReview(id));
+  });
+}
+
+async function setReviewStatus(id, status) {
+  const { error } = await MoriyaAuth.sb.from('reviews').update({ status }).eq('id', id);
+  if (error) { alert('שגיאה בעדכון: ' + error.message); return; }
+  await loadReviews();
+  renderReviewsAdmin();
+}
+
+async function deleteReview(id) {
+  const ok = await confirmDialog({
+    icon: '🗑️', title: 'למחוק את חוות הדעת לצמיתות?',
+    message: 'לא ניתן לשחזר אחרי מחיקה.',
+    confirmText: 'כן, מחקי', cancelText: 'חזרה', tone: 'danger',
+  });
+  if (!ok) return;
+  const { error } = await MoriyaAuth.sb.from('reviews').delete().eq('id', id);
+  if (error) { alert('שגיאה במחיקה: ' + error.message); return; }
+  await loadReviews();
+  renderReviewsAdmin();
 }
 
 // ─── KPI cards ────────────────────────────────────────────────────────────────
