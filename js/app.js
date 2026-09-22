@@ -1376,34 +1376,62 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     ...state.addons
   ];
 
-  // 1) Create the Google Calendar event (existing backend)
-  let googleEventId = null;
-  try {
-    const res = await fetch(`${API_BASE}/api/book`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date:        state.selectedDate,
-        time:        state.selectedTime,
-        duration:    state.totalTime,
-        clientName:  name,
-        clientPhone: phone,
-        notes,
-        services,
-        totalPrice:  state.totalPrice,
-        userId:      MoriyaAuth.user.id
-      })
-    });
-    if (res.ok) {
-      const data = await res.json().catch(() => ({}));
-      googleEventId = data.eventId || null;
+  // Hands and feet are booked together but Moriya wants them landing as two
+  // separate, independently cancellable/movable appointments back-to-back,
+  // rather than one long combined one. Split only when both sides are actually
+  // present — a hands-only or feet-only booking still becomes one appointment,
+  // exactly as before.
+  const handsServices = services.filter(a => !a.separate);
+  const feetServices  = services.filter(a => a.separate);
+  const sumTime  = list => list.reduce((s, a) => s + a.time,  0);
+  const sumPrice = list => list.reduce((s, a) => s + a.price, 0);
+
+  const legs = (handsServices.length && feetServices.length)
+    ? [
+        { time: state.selectedTime, duration: sumTime(handsServices),
+          services: handsServices, totalPrice: sumPrice(handsServices) },
+        { time: MoriyaSchedule.fromMin(MoriyaSchedule.toMin(state.selectedTime) + sumTime(handsServices)),
+          duration: sumTime(feetServices), services: feetServices, totalPrice: sumPrice(feetServices) }
+      ]
+    : [
+        { time: state.selectedTime, duration: state.totalTime, services, totalPrice: state.totalPrice }
+      ];
+
+  // 1) Create the Google Calendar event(s) (existing backend) — one call per leg.
+  const googleEventIds = [];
+  for (const leg of legs) {
+    let eventId = null;
+    try {
+      const res = await fetch(`${API_BASE}/api/book`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          date:        state.selectedDate,
+          time:        leg.time,
+          duration:    leg.duration,
+          clientName:  name,
+          clientPhone: phone,
+          notes,
+          services:    leg.services,
+          totalPrice:  leg.totalPrice,
+          userId:      MoriyaAuth.user.id
+        })
+      });
+      if (res.ok) {
+        const data = await res.json().catch(() => ({}));
+        eventId = data.eventId || null;
+      }
+    } catch (err) {
+      console.warn('Calendar booking failed (demo mode?):', err.message);
     }
-  } catch (err) {
-    console.warn('Calendar booking failed (demo mode?):', err.message);
+    googleEventIds.push(eventId);
   }
 
-  // 2) Save to Supabase (profile + appointment). Booking is gated on a session,
-  //    so this always runs and every appointment reaches Moriya's dashboard.
+  // 2) Save to Supabase (profile + one appointment row per leg). Booking is
+  //    gated on a session, so this always runs and every appointment reaches
+  //    Moriya's dashboard. Both rows go in a single insert() call so they land
+  //    together — Postgres runs a multi-row VALUES list as one statement, so
+  //    either both rows are written or neither is.
   let saveFailed = false;
   try {
     const uid = MoriyaAuth.user.id;
@@ -1418,31 +1446,32 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     // supabase-js reports a rejected write in the returned `error` rather than
     // throwing, so the result must be read — awaiting it bare would let a failed
     // insert pass for a successful one.
-    const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert({
+    const rows = legs.map((leg, i) => ({
       user_id:         uid,
       client_name:     name,
       client_phone:    phone,
       date:            state.selectedDate,
-      start_time:      state.selectedTime,
-      duration_min:    state.totalTime,
-      services:        services,
-      total_price:     state.totalPrice,
+      start_time:      leg.time,
+      duration_min:    leg.duration,
+      services:        leg.services,
+      total_price:     leg.totalPrice,
       status:          'booked',
-      google_event_id: googleEventId,
+      google_event_id: googleEventIds[i],
       notes:           notes || null
-    });
+    }));
+    const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert(rows);
     if (apptErr) throw new Error(apptErr.message);
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
     saveFailed = true;
   }
 
-  // The appointment lives nowhere anyone can manage it, so take the calendar
-  // event back down too — otherwise the slot stays blocked by a booking that
-  // Moriya can't see and the client can't cancel — and say so instead of
-  // showing a success screen for an appointment that does not exist.
+  // The appointment(s) live nowhere anyone can manage them, so take the
+  // calendar event(s) back down too — otherwise the slot stays blocked by a
+  // booking that Moriya can't see and the client can't cancel — and say so
+  // instead of showing a success screen for an appointment that does not exist.
   if (saveFailed) {
-    await rollbackCalendarEvent(googleEventId);
+    await Promise.all(googleEventIds.map(rollbackCalendarEvent));
     btn.disabled    = false;
     btn.textContent = 'אשרי הזמנה ✓';
     showStep('error');
