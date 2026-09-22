@@ -119,7 +119,7 @@
   // the calendar. Every one carries `separate: true`, so Moriya's calendar lists
   // them after the manicure behind "בנוסף,"; their time and price join the
   // appointment total like anything else, which is what keeps every calendar
-  // constraint (the breaks, the 90-min grid, the 18:00 close) applying to them
+  // constraint (the breaks, the 90-min grid, the day's close time) applying to them
   // unchanged. `requiresGel` mirrors step 1's data-requires-base: those two only
   // make sense on top of the polish itself, while the removal stands on its own.
   // The names repeat step 1's wording, so everything that matches a saved

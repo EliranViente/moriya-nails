@@ -29,8 +29,6 @@ function getAuth() {
 
 const CALENDAR_ID = process.env.CALENDAR_ID || 'moriya681@gmail.com';
 const TZ          = 'Asia/Jerusalem';
-const WORK_START  = 9;   // 09:00
-const WORK_END    = 17;  // 17:00
 
 const SB_ENV = { url: process.env.SUPABASE_URL || '', key: process.env.SUPABASE_SERVICE_ROLE_KEY || '' };
 const URGENT_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -95,13 +93,19 @@ app.get('/api/busy-slots', async (req, res) => {
     const auth     = getAuth();
     const calendar = google.calendar({ version: 'v3', auth });
 
-    const timeMin = new Date(`${date}T${String(WORK_START).padStart(2,'0')}:00:00`);
-    const timeMax = new Date(`${date}T${String(WORK_END).padStart(2,'0')}:00:00`);
+    // Query the whole UTC day so the Israel work-hours window is fully covered
+    // regardless of DST or which Friday band is in effect (parity with
+    // netlify/functions/busy-slots.js). Returned busy times are converted to
+    // Israel minutes below.
+    const timeMin  = `${date}T00:00:00Z`;
+    const dayAfter = new Date(`${date}T00:00:00Z`);
+    dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
+    const timeMax  = dayAfter.toISOString();
 
     const fbRes = await calendar.freebusy.query({
       requestBody: {
-        timeMin:  timeMin.toISOString(),
-        timeMax:  timeMax.toISOString(),
+        timeMin,
+        timeMax,
         timeZone: TZ,
         items:    [{ id: CALENDAR_ID }]
       }
