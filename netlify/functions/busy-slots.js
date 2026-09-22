@@ -10,12 +10,18 @@ const TZ          = 'Asia/Jerusalem';
 const WORK_START  = 9;   // 09:00
 const WORK_END    = 17;  // 17:00
 
+// Built once per warm container instead of per request, so a reused (warm)
+// invocation skips re-authenticating with Google and reuses the cached token.
+let auth;
 function getAuth() {
-  const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
-  return new google.auth.GoogleAuth({
-    credentials,
-    scopes: ['https://www.googleapis.com/auth/calendar']
-  });
+  if (!auth) {
+    const credentials = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+    auth = new google.auth.GoogleAuth({
+      credentials,
+      scopes: ['https://www.googleapis.com/auth/calendar']
+    });
+  }
+  return auth;
 }
 
 function toMinutes(isoString, tz) {
