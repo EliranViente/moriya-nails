@@ -776,6 +776,10 @@ async function setTcActive(id, kind, section, active) {
   if (kind === 'custom' && section) patch.section = section;
   const { error } = await MoriyaAuth.sb.from('treatments').upsert(patch);
   if (error) { alert('שגיאה בשמירה: ' + error.message); return false; }
+  // The caller re-renders right after this resolves – without reloading here
+  // first, that render would still be reading the pre-hide/restore snapshot
+  // and the card would look unchanged even though the write went through.
+  await loadTreatments();
   return true;
 }
 
