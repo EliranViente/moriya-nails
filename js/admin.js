@@ -879,7 +879,12 @@ async function saveNewTreatment(card, kind, section) {
     time_min: Math.max(0, Number(card.querySelector('.tc-time-input').value) || 0),
     price: Math.max(0, Number(card.querySelector('.tc-price-input').value) || 0),
     active: true,
-    sort_order: Date.now(),
+    // One past whatever else already sits in this list, so a new treatment
+    // appends at the end. sort_order is a plain int column – Date.now() (a
+    // millisecond timestamp) overflows it, unlike this small counter.
+    sort_order: 1 + Math.max(0, ...dash.treatments
+      .filter(r => r.kind === kind && (kind !== 'custom' || r.section === section))
+      .map(r => r.sort_order || 0)),
   };
   const { error } = await MoriyaAuth.sb.from('treatments').insert(row);
   if (error) { alert('שגיאה בהוספה: ' + error.message); return; }
