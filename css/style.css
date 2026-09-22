@@ -2170,7 +2170,7 @@ label.rx-row { cursor: pointer; }
 .reviews-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
   flex-wrap: wrap;
   gap: 16px;
   margin-bottom: 28px;
@@ -2512,6 +2512,27 @@ label.rx-row { cursor: pointer; }
   }
   .bs-value { font-size: 0.96rem; }
   .bs-label { font-size: 0.66rem; }
+
+  /* Reviews: tighter section padding, full-width toolbar controls, and a
+     denser card layout so it reads well on a phone screen. */
+  .reviews-section { padding: 56px 0; }
+  .reviews-summary { gap: 8px; margin-bottom: 18px; }
+  .reviews-avg { font-size: 1.6rem; }
+  .stars.stars-lg .star { font-size: 1.2rem; }
+  .reviews-count { font-size: 0.88rem; }
+  .reviews-toolbar {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 14px;
+    margin-bottom: 22px;
+  }
+  .reviews-filter { justify-content: space-between; font-size: 0.86rem; }
+  .review-write-btn { width: 100%; text-align: center; }
+  .reviews-write-hint { text-align: center; }
+  .reviews-list { gap: 14px; }
+  .review-card { padding: 16px 18px; }
+  .review-avatar { width: 36px; height: 36px; font-size: 0.92rem; }
+  .review-body { font-size: 0.88rem; }
 }
 
 /* ═══════════════════════════════════════════
