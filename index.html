@@ -195,6 +195,7 @@
         <ul class="nav-links" id="nav-links">
           <li><a href="#booking" class="nav-link">הזמנת תור</a></li>
           <li><a href="#gallery" class="nav-link">גלריה</a></li>
+          <li><a href="#reviews" class="nav-link">חוות דעת</a></li>
           <li><a href="#contact" class="nav-link">צרי קשר</a></li>
         </ul>
         <div class="nav-auth" id="nav-auth"></div>
@@ -915,6 +916,38 @@
     </div>
   </section>
 
+  <!-- ──────────────── REVIEWS ──────────────── -->
+  <section id="reviews" class="reviews-section">
+    <div class="container">
+      <div class="section-header">
+        <h2>חוות דעת מלקוחות</h2>
+        <p>מה אומרות הלקוחות שלי 💗</p>
+      </div>
+
+      <div class="reviews-summary" id="reviews-summary" style="display:none;">
+        <span class="reviews-avg" id="reviews-avg"></span>
+        <div class="stars stars-lg" id="reviews-avg-stars"></div>
+        <span class="reviews-count" id="reviews-count"></span>
+      </div>
+
+      <div class="reviews-toolbar">
+        <label class="reviews-filter">
+          <input type="checkbox" id="reviews-text-only" />
+          <span class="switch"></span>
+          <span>הצג רק חוות דעת עם טקסט</span>
+        </label>
+        <button type="button" class="review-write-btn" id="review-write-btn">✍️ כתבי חוות דעת</button>
+        <span class="reviews-write-hint" id="reviews-write-hint" style="display:none;">חוות דעת אפשר להשאיר אחרי ביקור אצל מוריה 💗</span>
+      </div>
+
+      <div class="reviews-list" id="reviews-list">
+        <div class="slots-loading"><div class="spinner"></div><span>טוענת חוות דעת…</span></div>
+      </div>
+
+      <button type="button" class="reviews-more-btn" id="reviews-more-btn" style="display:none;">עוד חוות דעת</button>
+    </div>
+  </section>
+
   <!-- ──────────────── CONTACT ──────────────── -->
   <section id="contact" class="contact-section">
     <div class="container">
@@ -971,7 +1004,22 @@
       <button class="modal-close" id="appts-close" aria-label="סגירה">✕</button>
       <h3 class="modal-title">התורים שלי</h3>
       <p class="modal-sub">ניתן לשנות או לבטל תור עד 48 שעות לפני מועדו</p>
+      <div class="appts-review-cta" id="appts-review-cta" style="display:none;">
+        <button type="button" class="review-write-btn" id="appts-review-btn">✍️ כתבי חוות דעת</button>
+      </div>
       <div class="appts-list" id="appts-list"></div>
+    </div>
+  </div>
+
+  <!-- ──────────────── WRITE / EDIT REVIEW MODAL ──────────────── -->
+  <div class="modal-overlay" id="review-modal" style="display:none;">
+    <div class="modal-card">
+      <button class="modal-close" id="review-close" aria-label="סגירה">✕</button>
+      <h3 class="modal-title" id="review-modal-title">כתבי חוות דעת</h3>
+      <p class="modal-sub">איך היה הטיפול והשירות אצל מוריה? נשמח לשמוע 💗</p>
+      <div class="review-stars-input" id="review-stars-input"></div>
+      <textarea class="review-textarea" id="review-body" placeholder="ספרי לנו על הטיפול... (לא חובה)" rows="4"></textarea>
+      <button type="button" class="btn-next" id="review-submit" disabled>פרסמי חוות דעת ✓</button>
     </div>
   </div>
 
@@ -1019,5 +1067,6 @@
   <script src="js/treatments.js"></script>
   <script src="js/app.js"></script>
   <script src="js/gallery.js"></script>
+  <script src="js/reviews.js"></script>
 </body>
 </html>

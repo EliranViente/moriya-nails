@@ -45,7 +45,11 @@ const MoriyaAuth = {
   },
 
   async signIn() {
-    const redirectTo = window.location.origin + window.location.pathname;
+    // Keeps the query/hash (e.g. the WhatsApp review link's ?review=1#reviews)
+    // through the Google redirect round-trip, so a flow started while logged
+    // out resumes where it left off instead of landing on a bare homepage.
+    const redirectTo = window.location.origin + window.location.pathname +
+      window.location.search + window.location.hash;
     await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
   },
 

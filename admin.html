@@ -258,6 +258,20 @@
         </div>
       </section>
 
+      <!-- ── Reviews moderation ──
+           General reviews clients leave about the salon/treatment (not tied to
+           a specific appointment – see supabase/schema.sql's `reviews` table).
+           Hiding keeps the row (status='hidden') so it can be restored; delete
+           is permanent. -->
+      <section class="admin-section" id="admin-reviews">
+        <div class="section-head">
+          <h2>חוות דעת</h2>
+        </div>
+        <div class="admin-reviews-list" id="admin-reviews-list">
+          <div class="clients-loading"><div class="spinner"></div><span>טוענת חוות דעת…</span></div>
+        </div>
+      </section>
+
       <!-- ── Treatment catalogue editor ──
            Everything a client sees in step 1/1B of the booking page and in the
            קישוט picker, editable from here. Rendered entirely by admin.js

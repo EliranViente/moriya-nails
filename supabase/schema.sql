@@ -301,12 +301,52 @@ create table if not exists public.treatments (
 );
 
 -- ============================================================
+--  5) REVIEWS – one general review per client about the salon/treatment,
+--     not tied to any specific appointment. Shown on the public site below
+--     the gallery. A client may write and later edit her own review (upsert
+--     on user_id); the admin can hide/restore or delete any review. Writing
+--     is gated by having at least one real past visit (see the insert/update
+--     policy below), so it can't be faked by someone who never booked.
+-- ============================================================
+create table if not exists public.reviews (
+  id          uuid primary key default gen_random_uuid(),
+  user_id     uuid not null unique references auth.users(id) on delete cascade,
+  -- Snapshot of "first name + last initial" at write/edit time, e.g. "גילה ד." –
+  -- like appointments.client_name, this doesn't live-join profiles.
+  client_name text not null,
+  rating      int not null check (rating between 1 and 5),
+  body        text,
+  status      text not null default 'visible', -- 'visible' | 'hidden'
+  created_at  timestamptz default now(),
+  updated_at  timestamptz default now()
+);
+create index if not exists idx_reviews_status on public.reviews(status);
+
+-- Bump updated_at on every edit, so an edited review sorts back to the top
+-- of the public "newest first" list.
+create or replace function public.reviews_touch_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at := now();
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_reviews_updated_at on public.reviews;
+create trigger trg_reviews_updated_at
+  before update on public.reviews
+  for each row execute function public.reviews_touch_updated_at();
+
+-- ============================================================
 --  ROW LEVEL SECURITY
 -- ============================================================
 alter table public.profiles     enable row level security;
 alter table public.availability enable row level security;
 alter table public.treatments   enable row level security;
 alter table public.appointments enable row level security;
+alter table public.reviews      enable row level security;
 
 -- ----- PROFILES -----
 drop policy if exists "profiles_select" on public.profiles;
@@ -367,6 +407,44 @@ drop policy if exists "appointments_admin_delete" on public.appointments;
 create policy "appointments_admin_delete" on public.appointments
   for delete using (public.is_admin());
 
+-- ----- REVIEWS -----
+-- Everyone (including logged-out visitors) reads visible reviews; the author
+-- also sees her own even while hidden; the admin sees everything.
+drop policy if exists "reviews_select" on public.reviews;
+create policy "reviews_select" on public.reviews
+  for select using (status = 'visible' or user_id = auth.uid() or public.is_admin());
+
+-- A client may only write/update her own review, and only once she has at
+-- least one real past visit (not cancelled/rejected/no-show, and its start
+-- time has already passed) – this is the only gate; no specific appointment
+-- is recorded.
+drop policy if exists "reviews_insert_own" on public.reviews;
+create policy "reviews_insert_own" on public.reviews
+  for insert with check (
+    user_id = auth.uid()
+    and exists (
+      select 1 from public.appointments a
+      where a.user_id = auth.uid()
+        and a.status not in ('cancelled', 'rejected', 'no_show', 'pending_urgent_approval')
+        and (a.date + a.start_time) < now()
+    )
+  );
+
+drop policy if exists "reviews_update_own" on public.reviews;
+create policy "reviews_update_own" on public.reviews
+  for update using (user_id = auth.uid()) with check (user_id = auth.uid());
+
+-- The admin hides/restores a review by flipping its status; permissive
+-- policies are OR-ed, so this adds to reviews_update_own rather than
+-- replacing it.
+drop policy if exists "reviews_admin_update" on public.reviews;
+create policy "reviews_admin_update" on public.reviews
+  for update using (public.is_admin()) with check (public.is_admin());
+
+drop policy if exists "reviews_delete" on public.reviews;
+create policy "reviews_delete" on public.reviews
+  for delete using (user_id = auth.uid() or public.is_admin());
+
 -- ============================================================
 --  CLIENTS REPORT – one readable row per client
 --  View it any time:  select * from public.clients_report;
@@ -398,6 +476,6 @@ group by p.id
 order by p.last_appointment desc nulls last;
 
 -- ============================================================
---  Done. Tables: profiles, availability, appointments, treatments.
+--  Done. Tables: profiles, availability, appointments, treatments, reviews.
 --  View: clients_report.
 -- ============================================================
