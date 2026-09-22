@@ -278,10 +278,34 @@ from (
 where p.id = sub.user_id;
 
 -- ============================================================
+--  4) TREATMENTS – admin overrides/additions on top of the built-in catalogue
+--     The base catalogue (base treatments, hand add-ons, feet add-ons, the
+--     קישוט picker's options) lives in js/treatments.js. A row here either
+--     patches an existing entry by id ('override'/'deco_option' with that id),
+--     or adds a brand new one ('custom'/'deco_option' with a fresh id). An
+--     empty table means "no changes" – the site behaves exactly as the code
+--     defaults describe. See js/treatments.js for how rows are merged in.
+-- ============================================================
+create table if not exists public.treatments (
+  id          text primary key,
+  kind        text not null default 'override', -- 'override' | 'custom' | 'deco_option'
+  section     text,                              -- 'hand' | 'feet' (only for kind='custom')
+  emoji       text,
+  name        text,
+  "desc"      text,
+  time_min    int,
+  price       numeric,
+  active      boolean not null default true,
+  sort_order  int not null default 0,
+  created_at  timestamptz default now()
+);
+
+-- ============================================================
 --  ROW LEVEL SECURITY
 -- ============================================================
 alter table public.profiles     enable row level security;
 alter table public.availability enable row level security;
+alter table public.treatments   enable row level security;
 alter table public.appointments enable row level security;
 
 -- ----- PROFILES -----
@@ -312,6 +336,15 @@ create policy "availability_read" on public.availability
 
 drop policy if exists "availability_admin_write" on public.availability;
 create policy "availability_admin_write" on public.availability
+  for all using (public.is_admin()) with check (public.is_admin());
+
+-- ----- TREATMENTS (everyone reads the catalogue; only admin edits it) -----
+drop policy if exists "treatments_read" on public.treatments;
+create policy "treatments_read" on public.treatments
+  for select using (true);
+
+drop policy if exists "treatments_admin_write" on public.treatments;
+create policy "treatments_admin_write" on public.treatments
   for all using (public.is_admin()) with check (public.is_admin());
 
 -- ----- APPOINTMENTS -----
@@ -365,6 +398,6 @@ group by p.id
 order by p.last_appointment desc nulls last;
 
 -- ============================================================
---  Done. Tables: profiles, availability, appointments.
+--  Done. Tables: profiles, availability, appointments, treatments.
 --  View: clients_report.
 -- ============================================================

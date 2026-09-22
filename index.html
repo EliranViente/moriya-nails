@@ -332,7 +332,7 @@
           <div class="base-treatment-group">
 
             <!-- Gel manicure with anatomic structure (default) -->
-            <div class="base-treatment-row" data-time="90" data-price="160">
+            <div class="base-treatment-row" data-id="base-anatomic" data-time="90" data-price="160">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="base-check" id="chk-base-anatomic" checked />
                 <div class="custom-check"></div>
@@ -349,7 +349,7 @@
             </div>
 
             <!-- Gel manicure (basic) -->
-            <div class="base-treatment-row" data-time="75" data-price="140">
+            <div class="base-treatment-row" data-id="base-plain" data-time="75" data-price="140">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="base-check" id="chk-base" />
                 <div class="custom-check"></div>
@@ -375,7 +375,7 @@
           <div class="addon-list">
 
             <!-- Double base -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
+            <div class="addon-row" data-id="double" data-time="15" data-price="20" data-type="checkbox" data-requires-base="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-double" />
                 <div class="custom-check"></div>
@@ -417,7 +417,7 @@
             </div>
 
             <!-- Polish removal + reshape (standalone quick fix) -->
-            <div class="addon-row" data-time="30" data-price="50" data-type="checkbox">
+            <div class="addon-row" data-id="removal" data-time="30" data-price="50" data-type="checkbox">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-gel-removal" />
                 <div class="custom-check"></div>
@@ -434,7 +434,7 @@
             </div>
 
             <!-- Extension removal (standalone quick fix) -->
-            <div class="addon-row" data-time="15" data-price="20" data-type="checkbox">
+            <div class="addon-row" data-id="removal-extension" data-time="15" data-price="20" data-type="checkbox">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-extension-removal" />
                 <div class="custom-check"></div>
@@ -451,7 +451,7 @@
             </div>
 
             <!-- Gel tip (quantity) -->
-            <div class="addon-row qty-row" data-time-per-unit="10" data-price-per-unit="15" data-type="quantity">
+            <div class="addon-row qty-row" data-id="polygel" data-time-per-unit="10" data-price-per-unit="15" data-type="quantity">
               <span class="a-emoji">🔧</span>
               <div class="addon-detail">
                 <span class="a-name">השלמת ציפורן בטיפס ג'ל</span>
@@ -469,7 +469,7 @@
             </div>
 
             <!-- Crack repair (quantity) -->
-            <div class="addon-row qty-row" data-time-per-unit="5" data-price-per-unit="5" data-type="quantity">
+            <div class="addon-row qty-row" data-id="crack" data-time-per-unit="5" data-price-per-unit="5" data-type="quantity">
               <span class="a-emoji">🩹</span>
               <div class="addon-detail">
                 <span class="a-name">תיקון סדק בציפורן</span>
@@ -487,7 +487,7 @@
             </div>
 
             <!-- Pincer (eagle) nail structure correction (quantity) -->
-            <div class="addon-row qty-row" data-time-per-unit="10" data-price-per-unit="15" data-type="quantity">
+            <div class="addon-row qty-row" data-id="pincer" data-time-per-unit="10" data-price-per-unit="15" data-type="quantity">
               <span class="a-emoji">📐</span>
               <div class="addon-detail">
                 <span class="a-name">תיקון מבנה נשרי לציפורן</span>
@@ -505,7 +505,7 @@
             </div>
 
             <!-- Personal toolkit (kept on the client's name; only with another treatment) -->
-            <div class="addon-row toolkit-row" data-time="0" data-price="30" data-type="checkbox" data-needs-treatment="true">
+            <div class="addon-row toolkit-row" data-id="toolkit" data-time="0" data-price="30" data-type="checkbox" data-needs-treatment="true">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="addon-check" id="chk-toolkit" />
                 <div class="custom-check"></div>
@@ -561,7 +561,7 @@
           <!-- Every option on this page uses the same treatment-row design; the
                time and price that actually count live in FEET_TREATMENTS. -->
           <div class="base-treatment-group">
-            <div class="base-treatment-row unchecked">
+            <div class="base-treatment-row unchecked" data-id="feetgel">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="feet-check" id="chk-feet-gel" />
                 <div class="custom-check"></div>
@@ -582,10 +582,10 @@
             <h4>תוספות אופציונליות</h4>
           </div>
 
-          <div class="base-treatment-group">
+          <div class="base-treatment-group" id="feet-addons-group">
 
             <!-- Double base – locked until the polish above is picked -->
-            <div class="base-treatment-row unchecked">
+            <div class="base-treatment-row unchecked" data-id="feetdouble">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="feet-check" id="chk-feet-double" />
                 <div class="custom-check"></div>
@@ -602,7 +602,7 @@
             </div>
 
             <!-- French – locked until the polish above is picked -->
-            <div class="base-treatment-row unchecked">
+            <div class="base-treatment-row unchecked" data-id="feetfrench">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="feet-check" id="chk-feet-french" />
                 <div class="custom-check"></div>
@@ -619,7 +619,7 @@
             </div>
 
             <!-- Polish removal + reshape – stands on its own, always selectable -->
-            <div class="base-treatment-row unchecked">
+            <div class="base-treatment-row unchecked" data-id="feetremoval">
               <label class="addon-checkbox-label">
                 <input type="checkbox" class="feet-check" id="chk-feet-removal" />
                 <div class="custom-check"></div>

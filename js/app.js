@@ -99,6 +99,15 @@ function pickerPriceText(opts) {
   return parts.concat(ranges).join(' ');
 }
 
+// Escapes text going into an HTML template string. Most of the catalogue is
+// fixed copy written into this file, but a treatment Moriya adds or renames
+// from the admin dashboard becomes live text on this page for every visitor –
+// this keeps a stray "<" or "&" in what she typed from breaking the markup.
+function escHtml(s) {
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
 function noteBoxesHtml(notes) {
   return notes.map(n => `
     <div class="note-box${n.tone ? ' ' + n.tone : ''}">
@@ -557,28 +566,6 @@ function updateBookingSummary() {
   }
 }
 
-// Attach listeners. A picker add-on's tick opens its modal instead of counting
-// on its own, so it is wired separately below.
-document.querySelectorAll('.addon-check').forEach(cb => {
-  if (cb.closest('.addon-row[data-type="picker"]')) return;
-  cb.addEventListener('change', recalculate);
-});
-// Base treatments are mutually exclusive – selecting one clears the other.
-document.querySelectorAll('.base-check').forEach(cb => {
-  cb.addEventListener('change', () => {
-    if (cb.checked) {
-      document.querySelectorAll('.base-check').forEach(other => {
-        if (other !== cb) other.checked = false;
-      });
-    }
-    recalculate();
-  });
-});
-// Every option on the feet page recalculates: the polish also gates two of them.
-document.querySelectorAll('.feet-check').forEach(cb => {
-  cb.addEventListener('change', recalculate);
-});
-
 // Reveal the route onto the feet page only to a client allowed to book it, clear
 // every feet selection the moment that access ends (signing out, or the admin
 // revoking it before a re-login) so nothing can ride along on a booking
@@ -592,29 +579,6 @@ function applyFeetGelAccess() {
 }
 document.addEventListener('moriya-auth-changed', applyFeetGelAccess);
 
-document.querySelectorAll('.qty-input').forEach(input => {
-  input.addEventListener('input', () => {
-    let v = parseInt(input.value) || 0;
-    const max = parseInt(input.max) || 10;
-    if (v < 0)   v = 0;
-    if (v > max) v = max;
-    input.value = v;
-    recalculate();
-  });
-});
-document.querySelectorAll('.qty-btn').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const targetId = btn.dataset.target;
-    const input    = document.getElementById(targetId);
-    if (!input) return;
-    let v   = parseInt(input.value) || 0;
-    const max = parseInt(input.max) || 10;
-    if (btn.classList.contains('plus')  && v < max) v++;
-    if (btn.classList.contains('minus') && v > 0)   v--;
-    input.value = v;
-    recalculate();
-  });
-});
 // ─── The add-on option picker modal ──────────────────────────────────────────
 // Ticking a picker add-on opens it; unticking clears what was chosen inside.
 // While the modal is open the client edits a draft, so closing it without
@@ -635,10 +599,10 @@ function openPicker(key) {
     <label class="picker-option${pickerDraft.includes(o.id) ? ' checked' : ''}">
       <input type="checkbox" class="picker-check" data-id="${o.id}" ${pickerDraft.includes(o.id) ? 'checked' : ''} />
       <div class="custom-check"></div>
-      <span class="a-emoji">${o.emoji}</span>
+      <span class="a-emoji">${escHtml(o.emoji)}</span>
       <div class="addon-detail">
-        <span class="a-name">${o.name}</span>
-        ${o.desc ? `<span class="a-desc">${o.desc}</span>` : ''}
+        <span class="a-name">${escHtml(o.name)}</span>
+        ${o.desc ? `<span class="a-desc">${escHtml(o.desc)}</span>` : ''}
       </div>
       <div class="addon-nums">
         <span class="a-time">+${o.time} דק'</span>
@@ -730,7 +694,7 @@ function renderPickerRow(row) {
   if (box) {
     box.style.display = chosen.length ? 'flex' : 'none';
     const list = box.querySelector('.picker-chosen-list');
-    if (list) list.innerHTML = chosen.map(o => `<li>${o.emoji} ${o.name}</li>`).join('');
+    if (list) list.innerHTML = chosen.map(o => `<li>${escHtml(o.emoji)} ${escHtml(o.name)}</li>`).join('');
     const edit = box.querySelector('.picker-edit');
     if (edit && cfg.editLabel) edit.textContent = cfg.editLabel;
   }
@@ -739,26 +703,185 @@ function renderPickerRow(row) {
   if (notes) notes.innerHTML = chosen.length ? noteBoxesHtml(pickerNotes(cfg, chosen)) : '';
 }
 
-document.querySelectorAll('.addon-row[data-type="picker"]').forEach(row => {
-  const key = row.dataset.picker;
-  const cb  = row.querySelector('input[type="checkbox"]');
-  // Every click on the row opens the picker – to choose for the first time, and
-  // just as much to change or drop what is already in it. A click never unticks
-  // the add-on on its own: the tick follows the choice, and the choice is made
-  // inside. So put a tick the click took away straight back, and let the modal
-  // decide what the add-on ends up being.
-  cb?.addEventListener('change', () => {
-    if (!cb.checked && (pickerChoice[key] || []).length) cb.checked = true;
-    openPicker(key);
+// ─── Admin catalogue overrides ───────────────────────────────────────────────
+// The static rows above are the built-in defaults; MoriyaTreatments merges in
+// whatever Moriya has changed from the admin dashboard (js/treatments.js) once
+// its Supabase fetch settles. This applies that result to the real DOM – text,
+// emoji, numbers, visibility – and adds any brand new treatment she created,
+// before wireStep1Listeners() below attaches a single set of listeners to
+// everything that ends up on the page (original rows and new ones alike).
+function applyTreatmentOverlay() {
+  const catalog = MoriyaTreatments.all();
+  document.querySelectorAll('#step-1 [data-id], #step-feet [data-id]').forEach(row => {
+    const entry = catalog.find(x => x.id === row.dataset.id);
+    if (!entry) { row.style.display = 'none'; return; }
+    patchTreatmentRow(row, entry);
   });
-  // The chosen list carries its own way back into the modal.
-  row.querySelector('.picker-edit')?.addEventListener('click', e => {
-    e.preventDefault();
-    openPicker(key);
-  });
-});
+  appendCustomRows('hand');
+  appendCustomRows('feet');
+}
 
-recalculate(); // initial
+// Applies one catalogue entry's emoji/name/desc/time/price onto its existing
+// row. A quantity row's visible numbers are left to recalculate() (it derives
+// them from data-time-per-unit/data-price-per-unit on every run, including the
+// initial one below) – only its per-unit data needs patching here. A plain
+// checkbox row's numbers are never touched by recalculate(), so they're set
+// here directly, keeping whatever "+" prefix the row already used (an add-on
+// that only makes sense on top of something else reads "+15 דק'"; a
+// stand-alone treatment just reads "30 דק'").
+function patchTreatmentRow(row, entry) {
+  const emojiEl = row.querySelector('.t-emoji, .a-emoji');
+  const nameEl  = row.querySelector('.t-name, .a-name');
+  const descEl  = row.querySelector('.t-desc, .a-desc');
+  if (emojiEl) emojiEl.textContent = entry.emoji;
+  if (nameEl)  nameEl.textContent  = entry.name;
+  if (descEl)  descEl.textContent  = entry.desc || '';
+
+  if (row.dataset.type === 'quantity') {
+    row.dataset.timePerUnit  = entry.time;
+    row.dataset.pricePerUnit = entry.price;
+    return;
+  }
+  row.dataset.time  = entry.time;
+  row.dataset.price = entry.price;
+  setPatchedNumber(row.querySelector('.t-time, .a-time'), entry.time, "דק'");
+  setPatchedNumber(row.querySelector('.t-price, .a-price'), entry.price, '₪');
+}
+
+function setPatchedNumber(el, value, unit) {
+  if (!el) return;
+  const hadPlus = el.textContent.trim().startsWith('+');
+  el.textContent = `${hadPlus ? '+' : ''}${value} ${unit}`;
+}
+
+// A brand new treatment Moriya added from the admin dashboard – always a plain,
+// stand-alone checkbox (no quantity/picker type, no exclusive group, no
+// requires-base/requires-gel relationship – see js/treatments.js). Built with
+// the same markup and classes as the existing rows, so every generic listener
+// and calculation below already knows how to handle it.
+function appendCustomRows(section) {
+  const list = MoriyaTreatments[section === 'feet' ? 'FEET' : 'HAND_EXTRAS'];
+  const host = section === 'feet'
+    ? document.getElementById('feet-addons-group')
+    : document.querySelector('#step-1 .addon-list');
+  if (!host) return;
+  list.filter(x => x.custom).forEach(entry => host.appendChild(buildTreatmentRow(entry, section)));
+}
+
+function buildTreatmentRow(entry, section) {
+  const row = document.createElement('div');
+  if (section === 'feet') {
+    row.className = 'base-treatment-row unchecked';
+    row.innerHTML = `
+      <label class="addon-checkbox-label">
+        <input type="checkbox" class="feet-check" id="${entry.checkId}" />
+        <div class="custom-check"></div>
+        <span class="t-emoji">${escHtml(entry.emoji)}</span>
+        <div class="treatment-detail">
+          <span class="t-name">${escHtml(entry.name)}</span>
+          <span class="t-desc">${escHtml(entry.desc || '')}</span>
+        </div>
+        <div class="treatment-nums">
+          <span class="t-time">${entry.time} דק'</span>
+          <span class="t-price">${entry.price} ₪</span>
+        </div>
+      </label>`;
+  } else {
+    row.className = 'addon-row';
+    row.dataset.type  = 'checkbox';
+    row.dataset.time  = entry.time;
+    row.dataset.price = entry.price;
+    row.innerHTML = `
+      <label class="addon-checkbox-label">
+        <input type="checkbox" class="addon-check" />
+        <div class="custom-check"></div>
+        <span class="a-emoji">${escHtml(entry.emoji)}</span>
+        <div class="addon-detail">
+          <span class="a-name">${escHtml(entry.name)}</span>
+          <span class="a-desc">${escHtml(entry.desc || '')}</span>
+        </div>
+        <div class="addon-nums">
+          <span class="a-time">${entry.time} דק'</span>
+          <span class="a-price">${entry.price} ₪</span>
+        </div>
+      </label>`;
+  }
+  row.dataset.id = entry.id;
+  return row;
+}
+
+// Attach listeners. A picker add-on's tick opens its modal instead of counting
+// on its own, so it is wired separately below. Runs once the catalogue overlay
+// above has settled, so it also covers any row Moriya just added.
+function wireStep1Listeners() {
+  document.querySelectorAll('.addon-check').forEach(cb => {
+    if (cb.closest('.addon-row[data-type="picker"]')) return;
+    cb.addEventListener('change', recalculate);
+  });
+  // Base treatments are mutually exclusive – selecting one clears the other.
+  document.querySelectorAll('.base-check').forEach(cb => {
+    cb.addEventListener('change', () => {
+      if (cb.checked) {
+        document.querySelectorAll('.base-check').forEach(other => {
+          if (other !== cb) other.checked = false;
+        });
+      }
+      recalculate();
+    });
+  });
+  // Every option on the feet page recalculates: the polish also gates two of them.
+  document.querySelectorAll('.feet-check').forEach(cb => {
+    cb.addEventListener('change', recalculate);
+  });
+  document.querySelectorAll('.qty-input').forEach(input => {
+    input.addEventListener('input', () => {
+      let v = parseInt(input.value) || 0;
+      const max = parseInt(input.max) || 10;
+      if (v < 0)   v = 0;
+      if (v > max) v = max;
+      input.value = v;
+      recalculate();
+    });
+  });
+  document.querySelectorAll('.qty-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const targetId = btn.dataset.target;
+      const input    = document.getElementById(targetId);
+      if (!input) return;
+      let v   = parseInt(input.value) || 0;
+      const max = parseInt(input.max) || 10;
+      if (btn.classList.contains('plus')  && v < max) v++;
+      if (btn.classList.contains('minus') && v > 0)   v--;
+      input.value = v;
+      recalculate();
+    });
+  });
+  document.querySelectorAll('.addon-row[data-type="picker"]').forEach(row => {
+    const key = row.dataset.picker;
+    const cb  = row.querySelector('input[type="checkbox"]');
+    // Every click on the row opens the picker – to choose for the first time,
+    // and just as much to change or drop what is already in it. A click never
+    // unticks the add-on on its own: the tick follows the choice, and the
+    // choice is made inside. So put a tick the click took away straight back,
+    // and let the modal decide what the add-on ends up being.
+    cb?.addEventListener('change', () => {
+      if (!cb.checked && (pickerChoice[key] || []).length) cb.checked = true;
+      openPicker(key);
+    });
+    // The chosen list carries its own way back into the modal.
+    row.querySelector('.picker-edit')?.addEventListener('click', e => {
+      e.preventDefault();
+      openPicker(key);
+    });
+  });
+
+  recalculate(); // initial
+}
+
+MoriyaTreatments.ready.then(() => {
+  applyTreatmentOverlay();
+  wireStep1Listeners();
+});
 
 // The page the calendar's "back" returns to – whichever one led into it.
 let calendarReturnStep = 1;

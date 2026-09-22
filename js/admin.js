@@ -277,6 +277,8 @@ const dash = {
   clientsCount: 0,
   clientsQuery: '',   // live search filter for the clients table
   clientsEditing: false,  // edit mode: permissions and removal are live only while on
+  treatments: [],      // raw rows from the `treatments` table (admin overrides/additions)
+  tcEditing: false,    // treatment catalogue edit mode
   chartRange: 30,
   apptFilter: 'upcoming',   // 'upcoming' | 'pending' | 'done' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
@@ -308,15 +310,17 @@ async function initDashboard() {
     activateApptFilter('pending');
   }
 
-  await Promise.all([loadAppointments(), loadClients()]);
+  await Promise.all([loadAppointments(), loadClients(), loadTreatments()]);
   renderKPIs();
   renderCharts();
   renderAppointments();
   renderClients();
+  renderTreatmentsEditor();
   populateTimeSelects();
   wireAvailabilityEditor();
   wireControls();
   wireClientsControls();
+  wireTreatmentsEditor();
 
   // Open on the day Moriya is most likely to be looking for: today when she is
   // working, otherwise the next day she has hours for.
@@ -539,6 +543,348 @@ async function loadAppointments() {
     .order('start_time', { ascending: true });
   if (error) { console.warn('loadAppointments:', error.message); dash.appointments = []; return; }
   dash.appointments = data || [];
+}
+
+// The admin's own overrides/additions on top of MoriyaTreatments.DEFAULTS – see
+// js/treatments.js for how the client-facing site merges the same table in.
+// Loaded as raw rows (not through MoriyaTreatments) because, unlike the booking
+// page, this editor also needs to show a treatment Moriya has hidden.
+async function loadTreatments() {
+  const { data, error } = await MoriyaAuth.sb.from('treatments').select('*');
+  if (error) { console.warn('loadTreatments:', error.message); dash.treatments = []; return; }
+  dash.treatments = data || [];
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+//  TREATMENT CATALOGUE EDITOR
+//  What a client sees in step 1/1B of the booking page and in the קישוט
+//  picker, editable here. js/treatments.js merges the same `treatments` rows
+//  into MoriyaTreatments.DEFAULTS on the booking page itself – this builds the
+//  same merge, except a hidden entry is kept (not dropped) so it can still be
+//  shown, restored or permanently deleted.
+// ═══════════════════════════════════════════════════════════════════════════
+
+// One list per category (base / hand / feet / deco), each entry carrying its
+// current effective emoji/name/desc/time/price/active plus `seeded` (built
+// into the code vs added by Moriya) and the id/kind/section a save writes back to.
+function catalogSections() {
+  const D = MoriyaTreatments.DEFAULTS;
+  const rows = dash.treatments || [];
+  const overrideRow = id => rows.find(r => r.kind !== 'deco_option' && r.id === id);
+  const decoRow     = id => rows.find(r => r.kind === 'deco_option' && r.id === id);
+
+  function seededEntry(entry, row, kind, section) {
+    return {
+      id: entry.id, kind, section, seeded: true,
+      emoji: (row && row.emoji != null) ? row.emoji : entry.emoji,
+      name:  (row && row.name  != null) ? row.name  : entry.name,
+      desc:  (row && row.desc  != null) ? row.desc  : (entry.desc || ''),
+      time:  (row && row.time_min != null) ? Number(row.time_min) : entry.time,
+      price: (row && row.price    != null) ? Number(row.price)    : entry.price,
+      active: !row || row.active !== false,
+    };
+  }
+  function customEntry(row, kind, section) {
+    return {
+      id: row.id, kind, section, seeded: false,
+      emoji: row.emoji || '✨', name: row.name || '', desc: row.desc || '',
+      time: Number(row.time_min) || 0, price: Number(row.price) || 0,
+      active: row.active !== false,
+    };
+  }
+  function plainSection(defaults, section) {
+    const used = new Set(defaults.map(e => e.id));
+    const seeded = defaults.map(e => seededEntry(e, overrideRow(e.id), 'override', section));
+    const added  = rows
+      .filter(r => r.kind === 'custom' && r.section === section && !used.has(r.id))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+      .map(r => customEntry(r, 'custom', section));
+    return [...seeded, ...added];
+  }
+
+  const decoUsed = new Set(D.decoOptions.map(o => o.id));
+  const decoItems = [
+    ...D.decoOptions.map(o => seededEntry(o, decoRow(o.id), 'deco_option', null)),
+    ...rows.filter(r => r.kind === 'deco_option' && !decoUsed.has(r.id))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+      .map(r => customEntry(r, 'deco_option', null)),
+  ];
+
+  return [
+    { key: 'base', title: 'הטיפול הבסיסי',   addLabel: null,            items: plainSection(D.BASES, 'base') },
+    { key: 'hand', title: 'תוספות לידיים',    addLabel: 'טיפול לידיים',  items: plainSection(D.HAND_EXTRAS, 'hand') },
+    { key: 'feet', title: 'טיפולי רגליים',    addLabel: 'טיפול לרגליים', items: plainSection(D.FEET, 'feet') },
+    { key: 'deco', title: 'אפשרויות קישוט',   addLabel: 'אפשרות קישוט',  items: decoItems },
+  ];
+}
+
+function findTcEntry(id) {
+  return catalogSections().flatMap(c => c.items).find(x => x.id === id);
+}
+
+function renderTreatmentsEditor() {
+  const box = document.getElementById('tc-catalog');
+  if (!box) return;
+  const cats = catalogSections();
+  const editing = dash.tcEditing;
+
+  const sectionsHtml = cats.map(cat => {
+    const visible = cat.items.filter(x => x.active);
+    return `
+      <div class="tc-section">
+        <h3 class="tc-section-title">${cat.title}</h3>
+        <div class="tc-list" data-cat="${cat.key}">${visible.map(x => tcCardHtml(x, editing)).join('')}</div>
+        ${editing && cat.addLabel ? `<button type="button" class="tc-add-btn" data-cat="${cat.key}">+ הוספת ${cat.addLabel}</button>` : ''}
+      </div>`;
+  }).join('');
+
+  const hidden = cats.flatMap(cat => cat.items.filter(x => !x.active));
+  const hiddenHtml = hidden.length ? `
+    <div class="tc-hidden-wrap" id="tc-hidden-wrap">
+      <button type="button" class="tc-hidden-toggle" id="tc-hidden-toggle">טיפולים מוסתרים (${hidden.length}) ▾</button>
+      <div class="tc-list tc-hidden-list" id="tc-hidden-list" hidden>${hidden.map(x => tcCardHtml(x, editing, true)).join('')}</div>
+    </div>` : '';
+
+  box.innerHTML = sectionsHtml + hiddenHtml;
+  wireTreatmentCards(box);
+}
+
+// Deco's 6 built-in styles keep their name/emoji/desc fixed – see the
+// decision this mirrors in js/treatments.js's mergeDecoOptions().
+function tcCardHtml(entry, editing, isHidden = false) {
+  const lockedText = entry.kind === 'deco_option' && entry.seeded;
+  const attrs = `data-id="${escAttr(entry.id)}" data-kind="${entry.kind}" data-section="${entry.section || ''}"`;
+  const numsView = `<span class="rx-nums"><span class="rx-time">${entry.time} דק'</span><span class="rx-price">${entry.price} ₪</span></span>`;
+
+  if (!editing) {
+    return `
+      <div class="rx-row tc-card${isHidden ? ' is-hidden' : ''}" ${attrs}>
+        <span class="rx-emoji">${escAttr(entry.emoji)}</span>
+        <div class="rx-detail"><span class="rx-name">${escAttr(entry.name)}</span><span class="rx-desc">${escAttr(entry.desc || '')}</span></div>
+        ${numsView}
+      </div>`;
+  }
+
+  if (isHidden) {
+    // A seeded (built-in) treatment lives in the code, not the database – its
+    // row here only ever carries active:false, so there's nothing further a
+    // "permanent delete" could remove. Only a treatment Moriya added herself
+    // can be erased outright.
+    return `
+      <div class="rx-row tc-card is-hidden" ${attrs}>
+        <span class="rx-emoji">${escAttr(entry.emoji)}</span>
+        <div class="rx-detail"><span class="rx-name">${escAttr(entry.name)}</span><span class="rx-desc">${escAttr(entry.desc || '')}</span></div>
+        ${numsView}
+        <div class="tc-actions">
+          <button type="button" class="tc-restore-btn" title="שחזור">↩️</button>
+          ${!entry.seeded ? `<button type="button" class="tc-del-btn" title="מחיקה לצמיתות">🗑</button>` : ''}
+        </div>
+      </div>`;
+  }
+
+  return `
+    <div class="rx-row tc-card" ${attrs}>
+      <input class="tc-input tc-emoji-input" value="${escAttr(entry.emoji)}" maxlength="4" ${lockedText ? 'disabled' : ''} />
+      <div class="rx-detail tc-detail-edit">
+        <input class="tc-input tc-name-input" value="${escAttr(entry.name)}" placeholder="שם הטיפול" ${lockedText ? 'disabled' : ''} />
+        <input class="tc-input tc-desc-input" value="${escAttr(entry.desc || '')}" placeholder="תיאור קצר (רשות)" ${lockedText ? 'disabled' : ''} />
+      </div>
+      <div class="tc-nums-edit">
+        <label>דק' <input type="number" class="tc-input tc-time-input" value="${entry.time}" min="0" /></label>
+        <label>₪ <input type="number" class="tc-input tc-price-input" value="${entry.price}" min="0" /></label>
+      </div>
+      <div class="tc-actions">
+        <button type="button" class="tc-hide-btn" title="הסתרה">🙈</button>
+        <button type="button" class="tc-del-btn" title="מחיקה לצמיתות">🗑</button>
+      </div>
+    </div>`;
+}
+
+function wireTreatmentsEditor() {
+  document.getElementById('tc-edit-toggle')?.addEventListener('click', () => setTcEditing(!dash.tcEditing));
+  document.getElementById('tc-edit-done')?.addEventListener('click', () => setTcEditing(false));
+}
+
+function setTcEditing(on) {
+  dash.tcEditing = !!on;
+  const banner = document.getElementById('tc-edit-banner');
+  const label  = document.getElementById('tc-edit-label');
+  if (banner) banner.hidden = !dash.tcEditing;
+  if (label)  label.textContent = dash.tcEditing ? 'סיום עריכה' : 'עריכת הטיפולים';
+  renderTreatmentsEditor();
+}
+
+// Re-wired on every render, exactly like the per-appointment service editor.
+function wireTreatmentCards(box) {
+  document.getElementById('tc-hidden-toggle')?.addEventListener('click', () => {
+    const list = document.getElementById('tc-hidden-list');
+    const btn  = document.getElementById('tc-hidden-toggle');
+    if (!list || !btn) return;
+    list.hidden = !list.hidden;
+    btn.textContent = btn.textContent.replace(/[▾▴]$/, list.hidden ? '▾' : '▴');
+  });
+
+  box.querySelectorAll('.tc-add-btn').forEach(btn => {
+    btn.addEventListener('click', () => openTcAddForm(btn.dataset.cat));
+  });
+
+  box.querySelectorAll('.tc-card').forEach(card => {
+    const id      = card.dataset.id;
+    const kind    = card.dataset.kind;
+    const section = card.dataset.section || null;
+
+    card.querySelectorAll('.tc-input').forEach(input => {
+      input.addEventListener('blur', () => saveTcField(id, kind, section, tcFieldFromInput(input), input));
+      if (input.type === 'number') input.addEventListener('keydown', e => { if (e.key === 'Enter') input.blur(); });
+    });
+    card.querySelector('.tc-hide-btn')?.addEventListener('click', () => hideTreatment(id, kind, section));
+    card.querySelector('.tc-restore-btn')?.addEventListener('click', () => restoreTreatment(id, kind, section));
+    card.querySelector('.tc-del-btn')?.addEventListener('click', () => deleteTreatmentPermanently(id));
+  });
+}
+
+function tcFieldFromInput(input) {
+  if (input.classList.contains('tc-emoji-input')) return 'emoji';
+  if (input.classList.contains('tc-name-input'))  return 'name';
+  if (input.classList.contains('tc-desc-input'))  return 'desc';
+  if (input.classList.contains('tc-time-input'))  return 'time_min';
+  if (input.classList.contains('tc-price-input')) return 'price';
+  return null;
+}
+
+// Writes one changed field straight to its row. Supabase's upsert only touches
+// the columns it's given, so this never clobbers whatever else the row already
+// carries – no need to resend the rest of the entry just to change one field.
+async function saveTcField(id, kind, section, field, input) {
+  if (!field) return;
+  let value = input.value;
+  if (field === 'time_min' || field === 'price') {
+    value = Math.max(0, Number(value) || 0);
+    input.value = value;
+  } else {
+    value = value.trim();
+  }
+  const patch = { id, kind, [field]: value };
+  if (kind === 'custom' && section) patch.section = section;
+  const { error } = await MoriyaAuth.sb.from('treatments').upsert(patch);
+  if (error) { alert('שגיאה בשמירה: ' + error.message); return; }
+  await loadTreatments();
+}
+
+async function setTcActive(id, kind, section, active) {
+  const patch = { id, kind, active };
+  if (kind === 'custom' && section) patch.section = section;
+  const { error } = await MoriyaAuth.sb.from('treatments').upsert(patch);
+  if (error) { alert('שגיאה בשמירה: ' + error.message); return false; }
+  return true;
+}
+
+// Future, still-occupying appointments whose services list this treatment's
+// current name – the same {name,separate} match matchServices() elsewhere
+// uses to map a saved service back onto a catalogue entry.
+function futureBookingsFor(entry) {
+  const today = todayStr();
+  const isFeet = entry.section === 'feet';
+  return dash.appointments.filter(a =>
+    a.date >= today && occupiesSlot(a) &&
+    (a.services || []).some(s => s.name === entry.name && !!s.separate === isFeet));
+}
+
+function confirmTreatmentConflict(appts, action) {
+  const items = appts
+    .map(a => `<li>👤 ${escAttr(a.client_name)} — ${a.date} בשעה ${a.start_time.slice(0, 5)}</li>`)
+    .join('');
+  return confirmDialog({
+    icon:        '⚠️',
+    title:       'שימי לב — יש כבר תורים עם הטיפול הזה',
+    message:     'ללקוחות הבאות כבר נקבע תור שכולל את הטיפול הזה. התורים עצמם לא ישתנו או יבוטלו.',
+    html:        `<ul>${items}</ul>`,
+    confirmText: `${action} בכל זאת`,
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+}
+
+async function hideTreatment(id, kind, section) {
+  const entry = findTcEntry(id);
+  if (!entry) return;
+  const conflicts = futureBookingsFor(entry);
+  const ok = conflicts.length
+    ? await confirmTreatmentConflict(conflicts, 'להסתיר')
+    : await confirmDialog({
+        icon: '🙈', title: 'להסתיר את הטיפול?',
+        message: 'הטיפול ייעלם מהאתר ללקוחות חדשות. אפשר לשחזר אותו בכל שלב מ"טיפולים מוסתרים" למטה.',
+        confirmText: 'כן, הסתירי', cancelText: 'חזרה', tone: 'danger',
+      });
+  if (!ok) return;
+  if (await setTcActive(id, kind, section, false)) renderTreatmentsEditor();
+}
+
+async function restoreTreatment(id, kind, section) {
+  if (await setTcActive(id, kind, section, true)) renderTreatmentsEditor();
+}
+
+async function deleteTreatmentPermanently(id) {
+  const entry = findTcEntry(id);
+  if (!entry) return;
+  const conflicts = futureBookingsFor(entry);
+  const ok = conflicts.length
+    ? await confirmTreatmentConflict(conflicts, 'למחוק')
+    : await confirmDialog({
+        icon: '🗑️', title: 'למחוק את הטיפול לצמיתות?',
+        message: 'לא ניתן לשחזר אחרי מחיקה. תורים שכבר נקבעו עם הטיפול הזה לא יושפעו.',
+        confirmText: 'כן, מחקי', cancelText: 'חזרה', tone: 'danger',
+      });
+  if (!ok) return;
+  const { error } = await MoriyaAuth.sb.from('treatments').delete().eq('id', id);
+  if (error) { alert('שגיאה במחיקה: ' + error.message); return; }
+  await loadTreatments();
+  renderTreatmentsEditor();
+}
+
+function openTcAddForm(catKey) {
+  const list = document.querySelector(`.tc-list[data-cat="${catKey}"]`);
+  if (!list || list.querySelector('.tc-new-card')) return;
+  const section = catKey === 'deco' ? null : catKey;
+  const kind    = catKey === 'deco' ? 'deco_option' : 'custom';
+
+  const card = document.createElement('div');
+  card.className = 'rx-row tc-card tc-new-card';
+  card.innerHTML = `
+    <input class="tc-input tc-emoji-input" placeholder="🙂" maxlength="4" />
+    <div class="rx-detail tc-detail-edit">
+      <input class="tc-input tc-name-input" placeholder="שם הטיפול" />
+      <input class="tc-input tc-desc-input" placeholder="תיאור קצר (רשות)" />
+    </div>
+    <div class="tc-nums-edit">
+      <label>דק' <input type="number" class="tc-input tc-time-input" value="0" min="0" /></label>
+      <label>₪ <input type="number" class="tc-input tc-price-input" value="0" min="0" /></label>
+    </div>
+    <button type="button" class="admin-btn primary tc-save-new-btn">הוספה</button>`;
+  list.appendChild(card);
+  card.querySelector('.tc-name-input')?.focus();
+  card.querySelector('.tc-save-new-btn').addEventListener('click', () => saveNewTreatment(card, kind, section));
+}
+
+async function saveNewTreatment(card, kind, section) {
+  const nameInput = card.querySelector('.tc-name-input');
+  const name = nameInput.value.trim();
+  if (!name) { nameInput.focus(); return; }
+  const row = {
+    id: window.crypto?.randomUUID ? crypto.randomUUID() : `custom-${Date.now()}`,
+    kind, section,
+    emoji: card.querySelector('.tc-emoji-input').value.trim() || '✨',
+    name,
+    desc: card.querySelector('.tc-desc-input').value.trim(),
+    time_min: Math.max(0, Number(card.querySelector('.tc-time-input').value) || 0),
+    price: Math.max(0, Number(card.querySelector('.tc-price-input').value) || 0),
+    active: true,
+    sort_order: Date.now(),
+  };
+  const { error } = await MoriyaAuth.sb.from('treatments').insert(row);
+  if (error) { alert('שגיאה בהוספה: ' + error.message); return; }
+  await loadTreatments();
+  renderTreatmentsEditor();
 }
 
 async function loadClients() {

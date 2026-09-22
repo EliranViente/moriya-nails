@@ -200,9 +200,140 @@
     return s;
   }
 
+  // A frozen snapshot of the built-in defaults, taken before any override or
+  // addition is merged in below. BASES/HAND_EXTRAS/FEET/PICKERS are mutated in
+  // place once the merge runs, so this is the only way admin.js's catalogue
+  // editor can still see "what this looks like out of the box" – it needs that
+  // for every seeded entry, including ones Moriya has hidden (which the merged,
+  // client-facing arrays no longer carry at all).
+  const DEFAULTS = {
+    BASES: JSON.parse(JSON.stringify(BASES)),
+    HAND_EXTRAS: JSON.parse(JSON.stringify(HAND_EXTRAS)).filter(x => !String(x.id).startsWith('deco-')),
+    FEET: JSON.parse(JSON.stringify(FEET)),
+    decoOptions: JSON.parse(JSON.stringify(PICKERS.deco.options)),
+  };
+
+  // ─── Admin overrides/additions ─────────────────────────────────────────────
+  // Everything above is the built-in default catalogue. Moriya's admin editor
+  // (js/admin.js) writes rows to the `treatments` table on top of it: a row
+  // whose id matches one of the entries above patches its text/emoji/time/price
+  // or hides it (active=false); a row with kind='custom' (section 'hand' or
+  // 'feet') or kind='deco_option' with a fresh id adds a brand new one. An
+  // empty table – or a failed fetch – leaves every array exactly as declared
+  // above, so a Supabase hiccup never breaks the booking page.
+  //
+  // Arrays are mutated in place (never reassigned) so that every reference
+  // taken before the fetch resolves – admin.js's and app.js's top-level
+  // `const X = MoriyaTreatments.Y` lines included – sees the merged result
+  // once it lands, with no extra wiring required on their part.
+  function replaceContents(arr, items) { arr.length = 0; arr.push(...items); }
+
+  // Patches one entry from a matching DB row; returns false if the row hides it.
+  function applyOverride(entry, row, { textEditable = true } = {}) {
+    if (row.active === false) return false;
+    if (textEditable) {
+      if (row.emoji != null) entry.emoji = row.emoji;
+      if (row.name  != null) entry.name  = row.name;
+      if (row.desc  != null) entry.desc  = row.desc;
+    }
+    if (row.time_min != null) entry.time  = Number(row.time_min) || 0;
+    if (row.price    != null) entry.price = Number(row.price) || 0;
+    return true;
+  }
+
+  // Merges override/custom rows into one of BASES/HAND_EXTRAS/FEET, in place.
+  function mergeCatalogList(list, rows, section) {
+    const used = new Set();
+    const kept = list.filter(entry => {
+      const row = rows.find(r => r.kind !== 'deco_option' && r.id === entry.id);
+      if (!row) return true;
+      used.add(row.id);
+      return applyOverride(entry, row);
+    });
+    rows
+      .filter(r => r.kind === 'custom' && r.section === section && !used.has(r.id))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+      .forEach(r => kept.push({
+        id: r.id, emoji: r.emoji || '✨', name: r.name || '', desc: r.desc || '',
+        type: 'checkbox', time: Number(r.time_min) || 0, price: Number(r.price) || 0,
+        // Marks this as a row app.js still needs to build – as opposed to a
+        // pre-existing entry like the קישוט styles folded into HAND_EXTRAS
+        // below, which already has a home of its own (the picker modal) and
+        // must never get a stand-alone row of its own on step 1.
+        custom: true,
+        // collectFeetSelection() in app.js looks a feet entry's checkbox up by
+        // id (checkId), unlike the hand add-ons which it finds generically –
+        // a custom feet entry needs one of its own, matching the id the new
+        // row's checkbox gets when app.js builds it.
+        ...(section === 'feet' ? { separate: true, checkId: `chk-feet-${r.id}` } : {}),
+      }));
+    replaceContents(list, kept);
+  }
+
+  // Merges deco_option rows into PICKERS.deco.options, in place. Existing
+  // (seeded) options only take time/price from a row – their name/emoji are
+  // woven into how appointments and reminders group "קישוט – X" entries, so
+  // they stay fixed; a brand new option gets every field from its row.
+  function mergeDecoOptions(rows) {
+    const options = PICKERS.deco.options;
+    const used = new Set();
+    const kept = options.filter(opt => {
+      const row = rows.find(r => r.kind === 'deco_option' && r.id === opt.id);
+      if (!row) return true;
+      used.add(row.id);
+      return applyOverride(opt, row, { textEditable: false });
+    });
+    rows
+      .filter(r => r.kind === 'deco_option' && !used.has(r.id))
+      .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
+      .forEach(r => kept.push({
+        id: r.id, emoji: r.emoji || '✨', name: r.name || '',
+        time: Number(r.time_min) || 0, price: Number(r.price) || 0,
+      }));
+    replaceContents(options, kept);
+  }
+
+  // HAND_EXTRAS carries its own copy of the קישוט styles (pickerExtras('deco'),
+  // above) so admin.js's per-appointment editor can offer each one as a control
+  // of its own – but that copy was taken once, before any override/addition
+  // exists. Rebuilds it from the now-merged PICKERS.deco.options once
+  // mergeDecoOptions() has run, so a style Moriya renumbers or adds there shows
+  // up there too.
+  function syncDecoIntoHandExtras() {
+    const withoutDeco = HAND_EXTRAS.filter(x => !String(x.id).startsWith('deco-'));
+    replaceContents(HAND_EXTRAS, [...withoutDeco, ...pickerExtras('deco')]);
+  }
+
+  let resolveReady;
+  const ready = new Promise(resolve => { resolveReady = resolve; });
+
+  async function load() {
+    try {
+      const { data, error } = await MoriyaAuth.sb.from('treatments').select('*');
+      if (error) throw error;
+      const rows = data || [];
+      mergeCatalogList(BASES, rows, 'base');
+      mergeCatalogList(HAND_EXTRAS, rows, 'hand');
+      mergeCatalogList(FEET, rows, 'feet');
+      mergeDecoOptions(rows);
+      syncDecoIntoHandExtras();
+      replaceContents(RESCHEDULE_EXTRAS, HAND_EXTRAS.filter(x => x.rescheduleExtra !== false));
+    } catch (err) {
+      console.warn('MoriyaTreatments: catalogue overrides unavailable, using built-in defaults.', err);
+    } finally {
+      resolveReady();
+    }
+  }
+  load();
+
   window.MoriyaTreatments = {
     PICKERS, BASES, HAND_EXTRAS, RESCHEDULE_EXTRAS, FEET,
     pickerServiceName, pickerExtras,
     sections, all, matchServices, toService, QTY_RE,
+    // Resolves once the admin's overrides/additions (if any) have been merged
+    // in, or once that attempt has failed – whichever comes first.
+    ready,
+    // The pristine built-in catalogue, untouched by any override – see above.
+    DEFAULTS,
   };
 })();

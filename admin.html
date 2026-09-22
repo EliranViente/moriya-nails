@@ -258,6 +258,26 @@
         </div>
       </section>
 
+      <!-- ── Treatment catalogue editor ──
+           Everything a client sees in step 1/1B of the booking page and in the
+           קישוט picker, editable from here. Rendered entirely by admin.js
+           (renderTreatmentsEditor) from MoriyaTreatments.DEFAULTS merged with
+           the `treatments` table – see js/treatments.js for how the same merge
+           reaches the booking page itself. -->
+      <section class="admin-section" id="admin-treatments">
+        <div class="section-head">
+          <h2>עריכת טיפולים</h2>
+          <button type="button" class="admin-btn ghost" id="tc-edit-toggle">✏️ <span id="tc-edit-label">עריכת הטיפולים</span></button>
+        </div>
+        <p class="clients-edit-banner" id="tc-edit-banner" hidden>
+          מצב עריכה פעיל — אפשר לשנות טקסטים, אימוג'ים, מחירים וזמנים, ולהוסיף, להסתיר או למחוק טיפולים.
+          <button type="button" class="clients-edit-done" id="tc-edit-done">סיום עריכה</button>
+        </p>
+        <div class="tc-catalog" id="tc-catalog">
+          <div class="clients-loading"><div class="spinner"></div><span>טוענת טיפולים…</span></div>
+        </div>
+      </section>
+
     </main>
   </div>
 

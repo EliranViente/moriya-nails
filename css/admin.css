@@ -871,6 +871,69 @@
   }
 }
 
+/* ── Treatment catalogue editor ──
+   Cards reuse the public site's .rx-* row look (see the treatments modal
+   above) so a card reads like the real thing on the booking page; only the
+   edit-mode inputs/actions below are new. */
+.tc-catalog { display: flex; flex-direction: column; gap: 26px; }
+.tc-section-title {
+  display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font-size: 0.9rem; font-weight: 700; color: var(--gray-700); margin-bottom: 10px;
+}
+.tc-section-hint { font-size: 0.75rem; font-weight: 500; color: var(--gray-500); }
+.tc-list { display: flex; flex-direction: column; gap: 10px; }
+
+.tc-card { position: relative; }
+.tc-card.is-hidden { opacity: 0.65; }
+.tc-actions { display: flex; align-items: center; gap: 6px; flex-shrink: 0; }
+.tc-hide-btn, .tc-restore-btn, .tc-del-btn {
+  font-family: var(--font); cursor: pointer; flex-shrink: 0;
+  width: 30px; height: 30px; border-radius: 50%; font-size: 0.95rem;
+  border: 1.5px solid var(--pink-100); background: var(--white); color: var(--gray-600);
+  transition: all var(--transition);
+}
+.tc-hide-btn:hover, .tc-restore-btn:hover { border-color: var(--pink-400); background: var(--pink-50); }
+.tc-del-btn:hover { color: #c0392b; border-color: #f1b0b0; background: #fdf0f0; }
+
+/* Edit mode: the plain .rx-name/.rx-desc/.rx-time/.rx-price text is replaced by
+   inputs of the same footprint, so toggling edit mode doesn't reflow the page. */
+.tc-input {
+  font-family: var(--font); color: var(--gray-800);
+  border: 1.5px solid var(--pink-200); border-radius: var(--radius-sm); background: var(--white);
+  padding: 5px 9px;
+}
+.tc-input:focus { outline: none; border-color: var(--pink-400); }
+.tc-input:disabled { background: var(--gray-50); color: var(--gray-500); cursor: not-allowed; }
+.tc-emoji-input { width: 44px; text-align: center; font-size: 1.2rem; flex-shrink: 0; }
+.tc-detail-edit { display: flex; flex-direction: column; gap: 4px; flex: 1; min-width: 0; }
+.tc-detail-edit .tc-name-input { font-weight: 700; }
+.tc-detail-edit .tc-input { width: 100%; font-size: 0.85rem; }
+.tc-nums-edit { display: flex; flex-direction: column; gap: 4px; flex-shrink: 0; }
+.tc-nums-edit label { display: flex; align-items: center; gap: 4px; font-size: 0.75rem; color: var(--gray-600); }
+.tc-nums-edit .tc-input { width: 64px; text-align: center; font-size: 0.8rem; }
+
+.tc-add-btn {
+  align-self: flex-start; margin-top: 4px;
+  font-family: var(--font); font-size: 0.85rem; font-weight: 600; cursor: pointer;
+  color: var(--pink-500); background: var(--pink-50); border: 1.5px dashed var(--pink-300);
+  border-radius: var(--radius-md); padding: 8px 16px; transition: all var(--transition);
+}
+.tc-add-btn:hover { background: var(--pink-100); border-color: var(--pink-400); }
+.tc-new-card .tc-save-new-btn { align-self: center; }
+
+.tc-hidden-wrap { border-top: 1.5px dashed var(--pink-100); padding-top: 14px; }
+.tc-hidden-toggle {
+  font-family: var(--font); cursor: pointer; font-size: 0.85rem; font-weight: 600;
+  color: var(--gray-600); background: none; border: none; padding: 0;
+}
+.tc-hidden-toggle:hover { color: var(--pink-500); }
+.tc-hidden-list { margin-top: 12px; }
+
+@media (max-width: 560px) {
+  .tc-card.rx-row { flex-wrap: wrap; }
+  .tc-nums-edit { flex-direction: row; margin-right: auto; }
+}
+
 /* ── Mobile optimization layer (touch-first, declared last) ── */
 
 /* Dynamic viewport height so the gradient backdrop fills notched screens. */
