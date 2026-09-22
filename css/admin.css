@@ -494,6 +494,22 @@
 .appt-btn.approve:hover { background: #d6f2e2; border-color: #9fe0bd; }
 .appt-btn.reject { color: #c0392b; background: #fdf0f0; border-color: #f1b0b0; }
 .appt-btn.reject:hover { background: #fbe0e0; border-color: #e8a0a0; }
+.appt-btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.appt-btn:disabled:hover { background: var(--white); border-color: var(--pink-100); }
+
+/* ── Waitlist (Phase 1) ── */
+.wl-date-group { padding: 14px 0; border-bottom: 1px solid var(--pink-100); }
+.wl-date-group:last-child { border-bottom: none; }
+.wl-date-group h4 { font-size: 0.95rem; color: var(--gray-800); margin: 0 0 10px; }
+.wl-open { color: #0a8a4a; font-weight: 700; }
+.wl-closed { color: var(--gray-400); font-weight: 400; }
+.wl-row {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 8px 0; font-size: 0.85rem;
+}
+.wl-name { font-weight: 700; color: var(--gray-800); }
+.wl-phone { color: var(--gray-600); }
+.wl-since { color: var(--gray-400); font-size: 0.78rem; margin-inline-end: auto; }
 
 /* ── Clients table ── */
 /* The hint sits between the header row and the table when used standalone. */

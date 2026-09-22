@@ -11,6 +11,7 @@ const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
 const { deleteClient } = require('../shared/delete-client');
 const { getUserFromToken, isAdminUser } = require('../shared/admin-auth');
+const { runWaitlistNotify } = require('../shared/waitlist-notify');
 
 const app = express();
 app.use(cors());
@@ -32,6 +33,7 @@ const TZ          = 'Asia/Jerusalem';
 
 const SB_ENV = { url: process.env.SUPABASE_URL || '', key: process.env.SUPABASE_SERVICE_ROLE_KEY || '' };
 const URGENT_WINDOW_MS = 48 * 60 * 60 * 1000;
+const PORT = process.env.PORT || 3001;
 
 // Dedicated approval email (parity with the Netlify function). No-op locally when
 // RESEND_API_KEY isn't set; best-effort so it never breaks the calendar sync.
@@ -292,7 +294,20 @@ app.post('/api/delete-client', async (req, res) => {
   res.status(status).json(body);
 });
 
-const PORT = process.env.PORT || 3001;
+// ─── POST /api/waitlist-notify ─────────────────────────────────────────────────
+// Parity with the Netlify function (shared/waitlist-notify.js). The static
+// site and this API run on different local ports, so unlike production the
+// two base URLs genuinely differ: /api/busy-slots lives here, on this server,
+// while the email's admin-dashboard link points at the static server (8000).
+app.post('/api/waitlist-notify', async (req, res) => {
+  const { status, body } = await runWaitlistNotify({
+    date:        req.body && req.body.date,
+    apiBaseUrl:  `http://localhost:${PORT}`,
+    siteBaseUrl: process.env.SITE_URL || 'http://localhost:8000',
+  });
+  res.status(status).json(body);
+});
+
 app.listen(PORT, () => {
   console.log(`✅ Moriya Nails server running on http://localhost:${PORT}`);
   console.log(`📅 Calendar: ${CALENDAR_ID}`);
