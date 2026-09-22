@@ -861,20 +861,28 @@ async function getDayWindows(dateStr) {
   return byDate.get(dateStr) || {};
 }
 
-// Busy intervals for a day, cached so the calendar can check every open day
-// without re-hitting the backend on each re-render. On error we treat the day
-// as free (safe default – the day stays available).
-const busySlotsCache = new Map(); // dateStr → [{start,end}]
+// Busy intervals for a day, cached briefly so the calendar's per-day room
+// check and the slot picker (opened moments later, for the same date) don't
+// both hit the backend. Short TTL, not session-long: this is purely to kill
+// that one back-to-back re-fetch, not to serve minutes-old availability.
+const busySlotsCache = new Map(); // dateStr → { ts, busy }
+const BUSY_CACHE_TTL_MS = 20000;
 async function getBusySlots(dateStr) {
-  if (busySlotsCache.has(dateStr)) return busySlotsCache.get(dateStr);
-  let busy = [];
+  const cached = busySlotsCache.get(dateStr);
+  if (cached && (Date.now() - cached.ts) < BUSY_CACHE_TTL_MS) return cached.busy;
   try {
     const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
     const data = await res.json();
-    busy = data.busySlots || [];
-  } catch (e) { /* backend unreachable → treat as free */ }
-  busySlotsCache.set(dateStr, busy);
-  return busy;
+    const busy = data.busySlots || [];
+    busySlotsCache.set(dateStr, { ts: Date.now(), busy });
+    return busy;
+  } catch (e) {
+    // Backend unreachable — don't cache the failure (so the next read
+    // retries instead of treating the day as free for the rest of the
+    // session). Fall back to the last known value if we have one, else
+    // treat as free (safe default – the day stays available).
+    return cached ? cached.busy : [];
+  }
 }
 
 // Remove [s,e) from a list of busy intervals, splitting any interval it cuts
@@ -1023,15 +1031,10 @@ async function loadTimeSlots(dateStr) {
   slotsBox.style.display = 'block';
   slotsGrid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות פנויות…</span></div>';
 
-  let busySlots = [];
-  try {
-    const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
-    const data = await res.json();
-    busySlots  = data.busySlots || [];
-  } catch (e) {
-    // Backend not connected yet – show all slots as available
-    console.warn('Backend not reachable, showing all slots as available');
-  }
+  // renderCalendar() already fetched (and cached) this date's busy slots while
+  // checking which days in the month still have room, so reuse that instead of
+  // hitting the calendar backend a second time right when the client is waiting.
+  let busySlots = await getBusySlots(dateStr);
 
   // A logged-in client may book more than one appointment per day. If she
   // already has one on this date, show a friendly note (but still allow it) and
@@ -1432,6 +1435,9 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
       notes:           notes || null
     });
     if (apptErr) throw new Error(apptErr.message);
+    // The slot she just took is now busy — drop the cached read so anyone
+    // (including her, booking a second appointment) sees it as taken.
+    busySlotsCache.delete(state.selectedDate);
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
     saveFailed = true;
@@ -1682,6 +1688,8 @@ async function cancelAppointment(id, appts) {
     }
     // 2) Mark the appointment cancelled in Supabase.
     await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
+    // The freed slot should show as available again on the next calendar view.
+    if (appt) busySlotsCache.delete(appt.date);
   } catch (e) { console.warn('cancel failed:', e.message); }
   openMyAppointments();
 }
@@ -2010,6 +2018,9 @@ async function updateAppointment() {
       services:     mergedServices,
       status:       needsApproval ? 'pending_approval' : 'booked'
     }).eq('id', editingAppointment.id);
+    // Both the old date (now freed) and the new one (now taken) need a fresh read.
+    busySlotsCache.delete(editingAppointment.date);
+    busySlotsCache.delete(state.selectedDate);
   } catch (e) { console.warn('update failed:', e.message); }
 
   const svc = mergedServices.map(s => s.name);
