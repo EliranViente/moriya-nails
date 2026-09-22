@@ -106,13 +106,26 @@
 .section-tools { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
 
 /* ── Tabs ── */
-.range-tabs, .appt-filters { display: flex; gap: 6px; background: var(--pink-50); padding: 4px; border-radius: var(--radius-xl); }
+.range-tabs { display: flex; gap: 6px; background: var(--pink-50); padding: 4px; border-radius: var(--radius-xl); }
 .range-tab {
   font-family: var(--font); cursor: pointer; border: none; background: transparent;
   color: var(--gray-600); font-weight: 600; font-size: 0.85rem;
   padding: 7px 16px; border-radius: var(--radius-xl); transition: all var(--transition);
 }
 .range-tab.active { background: var(--white); color: var(--pink-500); box-shadow: var(--shadow-sm); }
+
+/* Appointment status tabs: more of them (and one long label, "ממתינות
+   לאישור") than the plain range tabs, so they stay on one row by shrinking
+   and letting a button's own label wrap to two lines instead of the row
+   wrapping to a new one. */
+.appt-filters {
+  display: flex; flex-wrap: nowrap; gap: 3px;
+  background: var(--pink-50); padding: 4px; border-radius: var(--radius-xl);
+}
+.appt-filters .range-tab {
+  flex: 1 1 0; min-width: 0; padding: 6px 4px;
+  font-size: 0.72rem; white-space: normal; text-align: center; line-height: 1.2;
+}
 
 /* ── Appointment time-window sub-filters ── */
 .appt-subfilters {
@@ -452,6 +465,7 @@
 .aac-dow { color: var(--gray-400); font-weight: 400; font-size: 0.85rem; }
 .aac-client { font-size: 0.88rem; color: var(--gray-700); margin-top: 4px; }
 .aac-svc { font-size: 0.82rem; color: var(--gray-600); margin-top: 3px; }
+.aac-cancelled-at { font-size: 0.8rem; color: #c0392b; margin-top: 5px; font-weight: 600; }
 .aac-side { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
 .aac-price { font-weight: 800; color: var(--pink-500); font-size: 1.05rem; }
 .aac-dur { font-size: 0.78rem; color: var(--gray-600); }
@@ -822,6 +836,10 @@
   .aac-actions { justify-content: flex-end; }
   .admin-main { padding: 20px 16px 60px; }
   .admin-section { padding: 18px; }
+  /* On its own line at this width anyway (see .section-head's wrap), so it
+     may as well use the full row instead of sitting shrunk on the right. */
+  .appt-filters { width: 100%; gap: 5px; }
+  .appt-filters .range-tab { padding: 9px 4px; font-size: 0.82rem; }
   /* The search stretches to fill the row, but the ⋮ button stays on it rather
      than wrapping to a line of its own. */
   .clients-tools { width: 100%; flex-wrap: nowrap; }
