@@ -251,7 +251,7 @@
       return applyOverride(entry, row);
     });
     rows
-      .filter(r => r.kind === 'custom' && r.section === section && !used.has(r.id))
+      .filter(r => r.kind === 'custom' && r.section === section && r.active !== false && !used.has(r.id))
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
       .forEach(r => kept.push({
         id: r.id, emoji: r.emoji || '✨', name: r.name || '', desc: r.desc || '',
@@ -284,7 +284,7 @@
       return applyOverride(opt, row, { textEditable: false });
     });
     rows
-      .filter(r => r.kind === 'deco_option' && !used.has(r.id))
+      .filter(r => r.kind === 'deco_option' && r.active !== false && !used.has(r.id))
       .sort((a, b) => (a.sort_order || 0) - (b.sort_order || 0))
       .forEach(r => kept.push({
         id: r.id, emoji: r.emoji || '✨', name: r.name || '',
