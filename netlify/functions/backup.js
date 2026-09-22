@@ -3,8 +3,9 @@
    Supabase's free tier has no automatic backups, and the dashboard's own
    "Export" only produces an appointments report, not a real backup. This
    pulls every row from every public table (via the service-role key, past
-   RLS) into one JSON file and emails it as an attachment, so a full restore
-   is possible by hand if the database is ever lost or corrupted. Restoring
+   RLS), plus a whitelisted snapshot of the login identities in auth.users,
+   into one JSON file and emails it as an attachment, so a restore is
+   possible by hand if the database is ever lost or corrupted. Restoring
    from the file is a manual process — this only produces it. Scheduled
    weekly via netlify.toml, Saturday evening (close to the end of Shabbat).
 ═══════════════════════════════════════════ */
@@ -37,6 +38,41 @@ async function fetchTable(name) {
     return null;
   }
   return res.json().catch(() => null);
+}
+
+// The login identities themselves (auth.users) aren't a public-schema table,
+// so they need Supabase's admin API rather than the REST endpoint above. Only
+// a fixed whitelist of fields is kept — the full admin record also carries
+// password hashes and one-time tokens, which have no reason to sit in an
+// email attachment. This can't be used to recreate the same login on restore
+// (Supabase Auth doesn't support inserting rows back into auth.users) — it's
+// a record of who the accounts were, not a restorable login backup.
+async function fetchAuthUsers() {
+  const perPage = 200;
+  const users = [];
+  for (let page = 1; ; page++) {
+    const url = `${SB_URL}/auth/v1/admin/users?page=${page}&per_page=${perPage}`;
+    const res = await fetch(url, { headers: { apikey: SB_KEY, Authorization: `Bearer ${SB_KEY}` } });
+    if (!res.ok) {
+      console.error('backup: auth_users fetch failed', res.status, await res.text().catch(() => ''));
+      return page === 1 ? null : users; // partial pages already collected are still useful
+    }
+    const body = await res.json().catch(() => null);
+    const pageUsers = (body && body.users) || [];
+    for (const u of pageUsers) {
+      users.push({
+        id: u.id,
+        email: u.email,
+        phone: u.phone,
+        created_at: u.created_at,
+        last_sign_in_at: u.last_sign_in_at,
+        full_name: (u.user_metadata && (u.user_metadata.full_name || u.user_metadata.name)) || null,
+        provider: u.app_metadata && u.app_metadata.provider
+      });
+    }
+    if (pageUsers.length < perPage) break;
+  }
+  return users;
 }
 
 async function sendEmail(dateStr, attachmentBase64, filename, tableCounts) {
@@ -93,6 +129,10 @@ exports.handler = async () => {
       data[table] = rows || [];
       tableCounts[table] = rows ? rows.length : null;
     }
+
+    const authUsers = await fetchAuthUsers();
+    data.auth_users = authUsers || [];
+    tableCounts.auth_users = authUsers ? authUsers.length : null;
 
     console.log('backup: row counts', tableCounts);
 
