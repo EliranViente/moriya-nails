@@ -1392,6 +1392,38 @@ function effectiveStatus(a) {
 }
 const isDoneAppt = a => effectiveStatus(a) === 'done';
 
+// When a cancelled-like appointment actually became cancelled, for display and
+// for sorting the cancelled tab newest-first. An explicit cancellation carries
+// its own cancelled_at (stamped by the DB trigger); an urgent request nobody
+// decided on before its own slot passed was never actively cancelled, so the
+// moment it expired — its own start time — stands in for it.
+function cancelTimestamp(a) {
+  if (a.cancelled_at) return new Date(a.cancelled_at);
+  if (a.status === 'pending_urgent_approval') return apptStart(a);
+  return null;
+}
+function fmtDateTime(d) {
+  return `${fmtDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Who cancelled it — the actual Google-account name of whoever was logged in
+// at the time (same name the clients table shows), stamped server-side by the
+// DB trigger from the request's own auth (see schema.sql), so it can't be
+// spoofed from the client. An expired, never-decided urgent request was never
+// actively cancelled by anyone, so it gets its own label instead.
+function cancelledByLabel(a) {
+  if (a.status === 'pending_urgent_approval') return 'פג תוקף אוטומטית';
+  return a.cancelled_by || null;
+}
+
+// The admin appointments list only shows what's still recent — past that, a
+// row stays in the database (reports and the Excel export are unaffected) but
+// drops off this screen so the list doesn't keep growing forever.
+const APPT_DISPLAY_CUTOFF_DAYS = 45;
+function withinDisplayWindow(a) {
+  return a.date >= dateStrOffset(-APPT_DISPLAY_CUTOFF_DAYS);
+}
+
 // Still holds its time slot: not cancelled, and not a declined urgent request
 // (a rejected one never got the slot, or gave it up — same as cancelled). An
 // unresolved pending_urgent_approval still counts, so Moriya's own scheduling
@@ -1429,6 +1461,23 @@ function applyWindowFilter(list) {
   });
 }
 
+// Each tab has its own fixed order: upcoming and pending read soonest-first,
+// done and cancelled read most-recent-first, and 'all' stays chronological
+// (oldest to farthest-future) since it spans both directions.
+function sortAppointments(list) {
+  if (dash.apptFilter === 'cancelled') {
+    // Older rows cancelled before cancelled_at existed have no timestamp to
+    // sort by, so they fall to the bottom rather than break the order.
+    list.sort((a, b) => (cancelTimestamp(b)?.getTime() || 0) - (cancelTimestamp(a)?.getTime() || 0));
+  } else {
+    list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
+    // Completed appointments read newest first: the one Moriya just finished
+    // — and is most likely here to correct — is at the top.
+    if (dash.apptFilter === 'done') list.reverse();
+  }
+  return list;
+}
+
 function renderAppointments() {
   const box = document.getElementById('admin-appts');
   const today = todayStr();
@@ -1448,10 +1497,10 @@ function renderAppointments() {
   } else if (dash.apptFilter === 'done') {
     list = list.filter(isDoneAppt);
   }
-  list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
-  // Completed appointments read newest first: the one Moriya just finished — and
-  // is most likely here to correct — is at the top.
-  if (dash.apptFilter === 'done') list.reverse();
+  // Old rows stay in the database for the reports and the Excel export, but
+  // fall off the admin screen once they're no longer recent.
+  list = list.filter(withinDisplayWindow);
+  sortAppointments(list);
 
   if (!list.length) {
     box.innerHTML = '<p class="avail-empty">אין תורים להצגה.</p>';
@@ -1500,11 +1549,16 @@ function renderAppointments() {
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
       <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
+    const cancelTs = cancelledLike ? cancelTimestamp(a) : null;
+    const cancelBy = cancelledLike ? cancelledByLabel(a) : null;
+    const cancelledAt = cancelTs
+      ? `<div class="aac-cancelled-at">🚫 בוטל ב-${fmtDateTime(cancelTs)}${cancelBy ? ` ע"י ${cancelBy}` : ''}</div>` : '';
     return `<div class="admin-appt-card ${cancelledLike ? 'is-cancelled' : ''}${past ? ' is-past' : ''}">
       <div class="aac-main">
         <div class="aac-when"><strong>📅 ${fmtDate(a.date)}</strong> · ⏰ ${time} <span class="aac-dow">(${dowLabel(a.date)})</span></div>
         <div class="aac-client">👤 ${a.client_name} · 📞 ${a.client_phone || '—'}</div>
         <div class="aac-svc">${svc}</div>
+        ${cancelledAt}
       </div>
       <div class="aac-side">
         <span class="aac-price">${ils(Number(a.total_price || 0))}</span>
