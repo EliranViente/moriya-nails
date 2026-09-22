@@ -369,10 +369,11 @@ async function nextWorkDay(startStr) {
 // ─── Availability calendar ────────────────────────────────────────────────────
 // The per-day model itself lives in js/schedule.js, shared with the public site,
 // so the day Moriya sees here is sliced exactly the way clients are offered it:
-// Fridays open 09:00–18:00 by default, slots on a 90-min grid that real
-// appointment lengths push forward, a fixed 10:30–11:15 break that a long
-// appointment may bite into, and a floating 15-min afternoon break that gets
-// pushed later instead.
+// Fridays open by default per FRIDAY_BANDS (hours, breaks and client count
+// shift through the year so the day still ends well before Shabbat in winter),
+// slots sit on a 90-min grid that real appointment lengths push forward, a
+// fixed break that a long appointment may bite into, and (most of the year) a
+// floating break that gets pushed later instead.
 const isFridayStr = MoriyaSchedule.isFriday;
 
 // The effective open windows for a day, applying the Friday default.

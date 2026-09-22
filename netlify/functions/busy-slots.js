@@ -7,8 +7,6 @@ const { google } = require('googleapis');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
-const WORK_START  = 9;   // 09:00
-const WORK_END    = 17;  // 17:00
 
 // Built once per warm container instead of per request, so a reused (warm)
 // invocation skips re-authenticating with Google and reuses the cached token.

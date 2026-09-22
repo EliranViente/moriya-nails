@@ -921,7 +921,7 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 
 // ─── Availability (admin-managed) ─────────────────────────────────────────────
 // Per-day model:
-//   • Fridays are work days by default (09:00–18:00) — no DB row needed.
+//   • Fridays are work days by default, hours per FRIDAY_BANDS — no DB row needed.
 //   • The admin can add explicit 'open' windows (any day), 'block' breaks, a
 //     'closed' marker that turns a default Friday off, or rows that replace the
 //     default breaks on a single date ('bigbreak' / 'float' / 'nodefault').
@@ -929,16 +929,19 @@ const HE_DAY_NAMES = ['א\'','ב\'','ג\'','ד\'','ה\'','ו\'','ש\''];
 //   closed → none · explicit open rows → those · else Friday → default · else none.
 // Each open window is sliced into appointments on a grid that depends on the
 // treatment length (90-min standard, 30-min for short treatments), minus breaks.
-// Scheduling model: start times sit on a fixed 90-min grid (09:00 · 11:15 · 12:45
-// · 14:30 · 16:00) that stays stable regardless of the client's own treatment
-// length. Already-booked appointments consume their real length and push the
-// break and every later slot forward by the overflow. A slot is offered when the
-// client's appointment fits there without overlapping a booking and ends by 18:00.
-//   • Big break (10:30–11:15): fixed and protected — a too-long appointment may
-//     overrun into it (up to 11:15) but it never moves; no slot starts inside it.
-//   • Small break (15 min): floating — it (and the slots after it) get pushed
-//     later when an appointment is still running past 14:00.
-// The rules themselves live in js/schedule.js, shared with the admin dashboard.
+// Scheduling model: start times sit on a fixed 90-min grid, anchored to the
+// day's opening time (which varies by FRIDAY_BANDS), that stays stable
+// regardless of the client's own treatment length. Already-booked appointments
+// consume their real length and push the break and every later slot forward by
+// the overflow. A slot is offered when the client's appointment fits there
+// without overlapping a booking and ends within the day's working window.
+//   • Big break: fixed and protected — a too-long appointment may overrun into
+//     it but it never moves; no slot starts inside it.
+//   • Small break: floating — it (and the slots after it) get pushed later
+//     when an appointment is still running past its "not before" time.
+// Friday's hours, breaks and client count change through the year (FRIDAY_BANDS)
+// so the day still ends well before Shabbat in winter. The rules themselves
+// live in js/schedule.js, shared with the admin dashboard.
 const padNum      = n => String(n).padStart(2, '0');
 const hhmmToMin   = MoriyaSchedule.toMin;
 const isFridayStr = MoriyaSchedule.isFriday;
