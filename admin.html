@@ -66,6 +66,10 @@
           <div class="kpi-icon">📈</div>
           <div class="kpi-body"><span class="kpi-value" id="kpi-avg">—</span><span class="kpi-label">ממוצע ליום עבודה</span></div>
         </div>
+        <div class="kpi-card kpi-clickable" id="kpi-pending-card" role="button" tabindex="0">
+          <div class="kpi-icon">🚨</div>
+          <div class="kpi-body"><span class="kpi-value" id="kpi-pending">—</span><span class="kpi-label">בקשות לאישור</span></div>
+        </div>
       </section>
 
       <!-- ── Charts ── -->
@@ -164,9 +168,10 @@
           <h2>ניהול תורים</h2>
           <div class="appt-filters" id="appt-filters">
             <button class="range-tab active" data-filter="upcoming">עתידיים</button>
+            <button class="range-tab" data-filter="pending">ממתינות לאישור</button>
             <button class="range-tab" data-filter="done">בוצעו</button>
-            <button class="range-tab" data-filter="all">הכל</button>
             <button class="range-tab" data-filter="cancelled">בוטלו</button>
+            <button class="range-tab" data-filter="all">הכל</button>
           </div>
         </div>
         <!-- Time-window sub-filters – shown only under the "upcoming" view -->

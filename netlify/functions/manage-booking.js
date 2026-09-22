@@ -15,6 +15,7 @@
  */
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
+const { getUserFromToken, isAdminUser } = require('../../shared/admin-auth');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
@@ -105,29 +106,72 @@ async function sendApprovalEmail({ clientName, clientPhone, services, date, time
   }
 }
 
+// Notifies Moriya that a client requested an appointment less than 48h away,
+// which per /api/book's server-side gate cannot go straight to the calendar.
+// Same Resend pattern as sendApprovalEmail() above. The link opens the admin
+// dashboard's own login gate rather than an unauthenticated token — this app
+// has no magic-link infrastructure, and every other admin action already
+// requires that same Google-login session.
+async function sendUrgentApprovalEmail({ clientName, clientPhone, services, date, time, duration, totalPrice, notes }) {
+  const apiKey = process.env.RESEND_API_KEY;
+  const to     = process.env.APPROVAL_EMAIL_TO || 'moriya681@gmail.com';
+  const from   = process.env.APPROVAL_EMAIL_FROM || 'Moriya Nails <onboarding@resend.dev>';
+  if (!apiKey) return;
+
+  // Netlify injects URL (this deploy's own live site URL) into every function
+  // automatically — no env var to configure. SITE_URL remains as a manual
+  // override for the rare case that isn't right (e.g. a custom domain Netlify
+  // doesn't reflect there), and the literal is a last-resort fallback only.
+  const siteUrl = process.env.URL || process.env.SITE_URL || 'https://moriya-nails.netlify.app';
+  const adminLink = `${siteUrl}/admin.html?pending=1`;
+  const serviceNames = serviceTitle(services);
+  const html = `
+    <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;
+                          background:#fff;border:1px solid #f3d7e3;border-radius:14px;overflow:hidden">
+      <div style="background:#e78aa8;color:#fff;padding:18px 22px;font-size:18px;font-weight:bold">
+        🚨 בקשת תור דחופה ממתינה לאישורך
+      </div>
+      <div style="padding:22px;color:#333;font-size:15px;line-height:1.7">
+        <p>היי מוריה,<br>לקוחה ביקשה תור בפחות מ-48 שעות מראש, ולכן הוא לא נכנס אוטומטית ליומן וממתין לאישורך.</p>
+        <table style="width:100%;border-collapse:collapse;margin:14px 0">
+          <tr><td style="padding:6px 0;color:#999">לקוחה</td><td style="padding:6px 0"><b>${clientName || '—'}</b></td></tr>
+          <tr><td style="padding:6px 0;color:#999">טלפון</td><td style="padding:6px 0">${clientPhone || '—'}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">תאריך ושעה</td><td style="padding:6px 0">${date} · ${time}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">טיפולים</td><td style="padding:6px 0">${serviceNames || '—'}</td></tr>
+          <tr><td style="padding:6px 0;color:#999">משך</td><td style="padding:6px 0">${duration} דקות</td></tr>
+          <tr><td style="padding:6px 0;color:#999">מחיר</td><td style="padding:6px 0">${totalPrice} ₪</td></tr>
+          ${notes ? `<tr><td style="padding:6px 0;color:#999">הערות</td><td style="padding:6px 0">${notes}</td></tr>` : ''}
+        </table>
+        <p style="margin:18px 0 6px">אשרי או דחי את הבקשה מלוח הבקרה:</p>
+        <a href="${adminLink}" style="display:inline-block;margin-top:10px;background:#e78aa8;color:#fff;
+                  text-decoration:none;padding:11px 22px;border-radius:9px;font-weight:bold">לבקשות הממתינות</a>
+      </div>
+    </div>`;
+
+  try {
+    const res = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${apiKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from,
+        to: [to],
+        subject: `🚨 בקשת תור דחופה ממתינה לאישור — ${clientName || 'לקוחה'} (${date})`,
+        html
+      })
+    });
+    if (!res.ok) {
+      const detail = await res.text().catch(() => '');
+      console.warn('urgent approval email failed:', res.status, detail);
+    }
+  } catch (err) {
+    console.warn('urgent approval email error:', err.message);
+  }
+}
+
 const SB_URL  = process.env.SUPABASE_URL || '';
 const SB_KEY  = process.env.SUPABASE_SERVICE_ROLE_KEY || '';
 const sbReady = Boolean(SB_URL && SB_KEY);
-
-// Admins may cancel / reschedule any appointment from the dashboard.
-const ADMIN_EMAILS = ['eliran.viente@gmail.com', 'moriya681@gmail.com'];
-
-// Resolve the Supabase user behind an access token.
-async function getUserFromToken(accessToken) {
-  if (!accessToken || !sbReady) return null;
-  try {
-    const res = await fetch(`${SB_URL}/auth/v1/user`, {
-      headers: { apikey: SB_KEY, Authorization: `Bearer ${accessToken}` }
-    });
-    if (!res.ok) return null;
-    const user = await res.json();
-    return user && user.id ? user : null;
-  } catch { return null; }
-}
-
-function isAdminUser(user) {
-  return Boolean(user && ADMIN_EMAILS.includes((user.email || '').toLowerCase()));
-}
+const SB_ENV  = { url: SB_URL, key: SB_KEY };
 
 // Is there any appointment row at all behind this calendar event? Used by the
 // rollback path, which must never delete an event that did make it to the
@@ -174,8 +218,19 @@ exports.handler = async (event) => {
   const { action, eventId, accessToken, date, time, duration,
           services, totalPrice, clientName, clientPhone, notes,
           pendingApproval, addedMinutes } = body;
-  if (!action || !eventId) {
-    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action or eventId' }) };
+  if (!action) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing action' }) };
+  }
+
+  // No eventId yet — the whole point is that this appointment isn't on the
+  // calendar. Best-effort, like every other email send in this file.
+  if (action === 'notify-urgent') {
+    await sendUrgentApprovalEmail({ clientName, clientPhone, services, date, time, duration, totalPrice, notes });
+    return { statusCode: 200, headers, body: JSON.stringify({ success: true }) };
+  }
+
+  if (!eventId) {
+    return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing eventId' }) };
   }
 
   // Undo an event whose appointment never made it into the database. It cannot
@@ -189,7 +244,7 @@ exports.handler = async (event) => {
     if (!sbReady) {
       return { statusCode: 503, headers, body: JSON.stringify({ error: 'not_configured' }) };
     }
-    const user = await getUserFromToken(accessToken);
+    const user = await getUserFromToken(SB_ENV, accessToken);
     if (!user) {
       return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };
     }
@@ -224,7 +279,7 @@ exports.handler = async (event) => {
   // Defense in depth: when Supabase is configured, verify the caller is either
   // the appointment owner or an admin managing it from the dashboard.
   if (sbReady) {
-    const user = await getUserFromToken(accessToken);
+    const user = await getUserFromToken(SB_ENV, accessToken);
     const allowed = user && (isAdminUser(user) || await userOwnsEvent(user.id, eventId));
     if (!allowed) {
       return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };

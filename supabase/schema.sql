@@ -166,13 +166,59 @@ create table if not exists public.appointments (
   duration_min    int  not null,
   services        jsonb default '[]'::jsonb,
   total_price     numeric default 0,
-  status          text not null default 'booked',  -- booked | cancelled | done | no_show
+  -- booked | cancelled | done | no_show | pending_urgent_approval | rejected
+  -- pending_urgent_approval: client self-booked less than 48h out, no calendar
+  -- event exists yet — see netlify/functions/book.js. Distinct from the
+  -- unrelated 'pending_approval' status js/app.js's updateAppointment() sets
+  -- on an existing (already-calendared) appointment when >15 min are added.
+  -- rejected: an urgent request Moriya declined, or one that lost the
+  -- auto-reject race to a competing request for the same slot. Never reaches
+  -- the calendar.
+  status          text not null default 'booked',
   google_event_id text,
   notes           text,
   created_at      timestamptz default now()
 );
 create index if not exists idx_appointments_date on public.appointments(date);
 create index if not exists idx_appointments_user on public.appointments(user_id);
+
+-- ============================================================
+--  CANCELLED_AT / CANCELLED_BY – auto-stamp the moment status becomes
+--  'cancelled' and the name of the Google account that did it (whoever's own
+--  session performed the update — the admin's or the client's own), so the
+--  admin panel can show and sort by when a booking was cancelled and by whom,
+--  regardless of which code path (client or admin) cancelled it. Read from
+--  the request's own auth (auth.uid()), not from anything the client sends,
+--  so it can't be spoofed.
+-- ============================================================
+alter table public.appointments add column if not exists cancelled_at timestamptz;
+alter table public.appointments add column if not exists cancelled_by text;
+
+create or replace function public.appointments_set_cancelled_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  if new.status = 'cancelled' and old.status is distinct from 'cancelled' then
+    new.cancelled_at := now();
+    -- Same name the clients table shows: profiles.full_name for whoever is
+    -- logged in right now, falling back to their email if it isn't set.
+    new.cancelled_by := coalesce(
+      (select full_name from public.profiles where id = auth.uid()),
+      auth.jwt() ->> 'email'
+    );
+  elsif new.status is distinct from 'cancelled' then
+    new.cancelled_at := null;
+    new.cancelled_by := null;
+  end if;
+  return new;
+end;
+$$;
+
+drop trigger if exists trg_appointments_cancelled_at on public.appointments;
+create trigger trg_appointments_cancelled_at
+  before update on public.appointments
+  for each row execute function public.appointments_set_cancelled_at();
 
 -- ============================================================
 --  LAST APPOINTMENT – keep profiles.last_appointment in sync

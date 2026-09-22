@@ -36,7 +36,10 @@ function dowLabel(dateStr) {
 function ils(n) { return Math.round(n).toLocaleString('he-IL') + ' ₪'; }
 
 // Hebrew labels for the appointment statuses stored in the database.
-const STATUS_HE = { booked: 'מאושר', done: 'בוצע', cancelled: 'בוטל', no_show: 'לא הגיעה' };
+const STATUS_HE = {
+  booked: 'מאושר', done: 'בוצע', cancelled: 'בוטל', no_show: 'לא הגיעה',
+  pending_urgent_approval: 'ממתין לאישור דחוף', rejected: 'נדחה',
+};
 
 // ─── WhatsApp reminders ───────────────────────────────────────────────────────
 // Venue details echoed inside the reminder message.
@@ -107,11 +110,12 @@ function sendReminder(id) {
 }
 
 // ─── "I changed your appointment" notices ─────────────────────────────────────
-// Appointments Moriya moved or cancelled during this session. Those are the two
-// changes a client can't see coming, so they — and only they — offer a WhatsApp
-// notice alongside the usual reminder, until the dashboard is reloaded.
+// Appointments Moriya moved, cancelled or declined during this session. Those
+// are changes a client can't see coming, so they — and only they — offer a
+// WhatsApp notice alongside the usual reminder, until the dashboard is reloaded.
 const movedAppts     = new Set();
 const cancelledAppts = new Set();
+const rejectedAppts  = new Set();
 
 function moveText(appt) {
   const time = (appt.start_time || '').slice(0, 5);
@@ -121,6 +125,37 @@ function moveText(appt) {
 function cancelNoticeText(appt) {
   const time = (appt.start_time || '').slice(0, 5);
   return `${appt.client_name} אהובה, ביטלתי את התור שלך ב-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
+}
+
+// A request Moriya declined, or one that lost the auto-reject race to a
+// competing request for the same slot (see adminApprove()).
+function declineText(appt) {
+  const time = (appt.start_time || '').slice(0, 5);
+  return `${appt.client_name}, לצערי לא התאפשר לי לאשר את הבקשה שלך לתור ב-${fmtDate(appt.date)} בשעה ${time}. אשמח לראותך במועד אחר, תוכלי לבחור תור חדש באתר בכל עת ${EMO.heart}`;
+}
+
+// An urgent (<48h) request Moriya just approved — same shape as reminderText()
+// (same details, venue, closing line), with only the opening line swapped to
+// announce the approval instead of the usual "just a reminder" framing.
+function approvedText(appt) {
+  const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
+  const time = (appt.start_time || '').slice(0, 5);
+  return [
+    `שלום ${appt.client_name} ${EMO.heart}`,
+    ``,
+    `התור שלך אושר ב-Moriya Nails ${EMO.polish}`,
+    ``,
+    `${EMO.calendar} ${dowLabel(appt.date)} · ${fmtDate(appt.date)}`,
+    `${EMO.clock} ${time}`,
+    `${EMO.facial} ${svc}`,
+    `${EMO.hourglass} משך משוער: ${appt.duration_min} דק׳`,
+    `${EMO.money} לתשלום: ${ils(Number(appt.total_price || 0))}`,
+    ``,
+    `${EMO.pin} ${VENUE_ADDR}`,
+    `${EMO.parking} הגעה וחניה: ${VENUE_MAPS}`,
+    ``,
+    `מחכה לראות אותך ${EMO.sparkH}`,
+  ].join('\n');
 }
 
 function waLink(appt, text) {
@@ -137,8 +172,10 @@ function openNotice(id, build) {
   window.open(url, '_blank', 'noopener');
 }
 
-const sendMoveNotice   = id => openNotice(id, moveText);
-const sendCancelNotice = id => openNotice(id, cancelNoticeText);
+const sendMoveNotice     = id => openNotice(id, moveText);
+const sendCancelNotice   = id => openNotice(id, cancelNoticeText);
+const sendDeclineNotice  = id => openNotice(id, declineText);
+const sendApprovedNotice = id => openNotice(id, approvedText);
 
 // Offered the moment the cancellation goes through, while Moriya is still on it.
 async function offerCancelNotice(appt) {
@@ -152,6 +189,36 @@ async function offerCancelNotice(appt) {
     tone:        'safe',
   });
   if (send) sendCancelNotice(appt.id);
+}
+
+// Offered right after an urgent request is declined (directly or via the
+// auto-reject race in adminApprove()), while Moriya is still looking at it.
+async function offerDeclineNotice(appt) {
+  if (!waPhone(appt.client_phone)) return;
+  const send = await confirmDialog({
+    icon:        '💬',
+    title:       'להודיע ללקוחה?',
+    message:     declineText(appt),
+    confirmText: 'שלחי בוואטסאפ',
+    cancelText:  'לא עכשיו',
+    tone:        'safe',
+  });
+  if (send) sendDeclineNotice(appt.id);
+}
+
+// Offered right after an urgent request is approved, while Moriya is still
+// looking at it — mirrors offerDeclineNotice()/offerCancelNotice().
+async function offerApprovedNotice(appt) {
+  if (!waPhone(appt.client_phone)) return;
+  const send = await confirmDialog({
+    icon:        '💬',
+    title:       'להודיע ללקוחה?',
+    message:     approvedText(appt),
+    confirmText: 'שלחי בוואטסאפ',
+    cancelText:  'לא עכשיו',
+    tone:        'safe',
+  });
+  if (send) sendApprovedNotice(appt.id);
 }
 
 async function getAccessToken() {
@@ -211,7 +278,7 @@ const dash = {
   clientsQuery: '',   // live search filter for the clients table
   clientsEditing: false,  // edit mode: permissions and removal are live only while on
   chartRange: 30,
-  apptFilter: 'upcoming',   // 'upcoming' | 'all' | 'cancelled'
+  apptFilter: 'upcoming',   // 'upcoming' | 'pending' | 'done' | 'all' | 'cancelled'
   apptWindow: 'all',        // upcoming time window: 'all' | '24h' | 'week' | 'month'
   charts: {},         // Chart.js instances
 };
@@ -223,7 +290,24 @@ let adminCalMonth = new Date().getMonth();
 let dashDayRows   = [];   // raw availability rows for the selected day
 let dashDay       = {};   // the selected day, as read by the shared schedule model
 
+// Activates an appointment filter tab programmatically (not from a direct tab
+// click) — shared by the ?pending=1 email-link handler below and the pending
+// KPI tile's click handler in wireControls().
+function activateApptFilter(filter) {
+  dash.apptFilter = filter;
+  document.querySelectorAll('#appt-filters .range-tab').forEach(t =>
+    t.classList.toggle('active', t.dataset.filter === filter));
+  const subfilters = document.getElementById('appt-subfilters');
+  if (subfilters) subfilters.style.display = filter === 'upcoming' ? '' : 'none';
+}
+
 async function initDashboard() {
+  // A link from the urgent-approval email (?pending=1) opens straight to the
+  // pending-approvals list, so Moriya lands on it right after logging in.
+  if (new URLSearchParams(location.search).get('pending') === '1') {
+    activateApptFilter('pending');
+  }
+
   await Promise.all([loadAppointments(), loadClients()]);
   renderKPIs();
   renderCharts();
@@ -471,7 +555,7 @@ async function loadClients() {
 // ─── KPI cards ────────────────────────────────────────────────────────────────
 function renderKPIs() {
   const today = todayStr();
-  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+  const active = dash.appointments.filter(isCountedAppt);
 
   const upcoming = active.filter(a => a.date >= today).length;
 
@@ -481,10 +565,13 @@ function renderKPIs() {
   const workingDays = new Set(last30.map(a => a.date)).size;
   const avgPerDay = workingDays ? revenue30 / workingDays : 0;
 
+  const pending = dash.appointments.filter(a => a.status === 'pending_urgent_approval' && !isPastAppt(a)).length;
+
   document.getElementById('kpi-clients').textContent = dash.clientsCount;
   document.getElementById('kpi-upcoming').textContent = upcoming;
   document.getElementById('kpi-revenue').textContent = ils(revenue30);
   document.getElementById('kpi-avg').textContent = ils(avgPerDay);
+  document.getElementById('kpi-pending').textContent = pending;
 }
 
 // ─── Charts ───────────────────────────────────────────────────────────────────
@@ -494,7 +581,7 @@ function aggregateByDay(range) {
   const to = dateStrOffset(range);
   const map = new Map(); // date -> { revenue, clients }
   dash.appointments
-    .filter(a => a.status !== 'cancelled' && a.date >= from && a.date <= to)
+    .filter(a => isCountedAppt(a) && a.date >= from && a.date <= to)
     .forEach(a => {
       const e = map.get(a.date) || { revenue: 0, clients: 0 };
       e.revenue += Number(a.total_price || 0);
@@ -604,7 +691,7 @@ function rangeLabelFor(dateStr, ranges) {
 // Sheet 1, top block – the four KPI cards, computed exactly like renderKPIs().
 function exportKpiRows() {
   const today = todayStr();
-  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+  const active = dash.appointments.filter(isCountedAppt);
   const last30 = active.filter(a => a.date >= dateStrOffset(-30) && a.date <= today);
   const revenue30 = last30.reduce((s, a) => s + Number(a.total_price || 0), 0);
   const workingDays = new Set(last30.map(a => a.date)).size;
@@ -619,7 +706,7 @@ function exportKpiRows() {
 // Sheet 1, bottom block – one row per range tab, so all the windows sit
 // side by side instead of only the one currently selected on screen.
 function exportRangeRows(ranges) {
-  const active = dash.appointments.filter(a => a.status !== 'cancelled');
+  const active = dash.appointments.filter(isCountedAppt);
   return ranges.map(r => {
     const w = rangeWindow(r.days);
     const inRange = active.filter(a => a.date >= w.from && a.date <= w.to);
@@ -642,7 +729,7 @@ function exportRangeRows(ranges) {
 function exportDayRows(ranges) {
   const map = new Map(); // date -> { revenue, clients }
   dash.appointments
-    .filter(a => a.status !== 'cancelled')
+    .filter(isCountedAppt)
     .forEach(a => {
       const e = map.get(a.date) || { revenue: 0, clients: 0 };
       e.revenue += Number(a.total_price || 0);
@@ -909,7 +996,7 @@ function isPastMin(date, minutes) {
 // their time up, so they leave no row behind.
 function buildDayItems(date) {
   const appts = dash.appointments
-    .filter(a => a.date === date && a.status !== 'cancelled')
+    .filter(a => a.date === date && occupiesSlot(a))
     .map(a => {
       const start = toMin((a.start_time || '00:00').slice(0, 5));
       return { key: `appt-${a.id}`, kind: 'appt', start, end: start + (Number(a.duration_min) || 0), appt: a };
@@ -1092,7 +1179,7 @@ function moveFreeSlot(date, start, end, winEnd) {
 // The day's booked time, as plain intervals.
 function apptIntervals(date) {
   return dash.appointments
-    .filter(a => a.date === date && a.status !== 'cancelled')
+    .filter(a => a.date === date && occupiesSlot(a))
     .map(a => {
       const s = toMin((a.start_time || '00:00').slice(0, 5));
       return { start: s, end: s + (Number(a.duration_min) || 0) };
@@ -1183,10 +1270,11 @@ function editBreak(date, brkKind, id, start, end) {
   });
 }
 
-// Appointments (non-cancelled) on `date` overlapping [sMin, eMin) minutes.
+// Appointments (non-cancelled, non-rejected) on `date` overlapping [sMin, eMin)
+// minutes. A rejected urgent request never held the slot, same as cancelled.
 function apptsInRange(date, sMin, eMin) {
   return dash.appointments.filter(a => {
-    if (a.status === 'cancelled' || a.date !== date) return false;
+    if (a.status === 'cancelled' || a.status === 'rejected' || a.date !== date) return false;
     const st = toMin(a.start_time.slice(0, 5));
     const en = st + (a.duration_min || 0);
     return st < eMin && en > sMin;
@@ -1292,12 +1380,69 @@ function isPastAppt(a) {
 // still reads 'booked' there — which is why the status is derived from the clock
 // everywhere it is used (the cards, the client's chart, the Excel export) rather
 // than in one place. A status that was set deliberately is never overridden.
+// An urgent request Moriya never decided on before its own slot time passed is
+// treated as cancelled everywhere (dashboard, stats, exports) — it never held
+// the slot and never reached the calendar, same as if she'd cancelled it
+// herself. js/app.js's "My Appointments" hides it from the client outright.
 function effectiveStatus(a) {
   if (!a) return '';
-  if (a.status === 'cancelled' || a.status === 'done' || a.status === 'no_show') return a.status;
+  if (a.status === 'pending_urgent_approval') return isPastAppt(a) ? 'cancelled' : 'pending_urgent_approval';
+  if (['cancelled', 'done', 'no_show', 'rejected'].includes(a.status)) return a.status;
   return isPastAppt(a) ? 'done' : a.status;
 }
 const isDoneAppt = a => effectiveStatus(a) === 'done';
+
+// When a cancelled-like appointment actually became cancelled, for display and
+// for sorting the cancelled tab newest-first. An explicit cancellation carries
+// its own cancelled_at (stamped by the DB trigger); an urgent request nobody
+// decided on before its own slot passed was never actively cancelled, so the
+// moment it expired — its own start time — stands in for it.
+function cancelTimestamp(a) {
+  if (a.cancelled_at) return new Date(a.cancelled_at);
+  if (a.status === 'pending_urgent_approval') return apptStart(a);
+  return null;
+}
+function fmtDateTime(d) {
+  return `${fmtDate(`${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`)} · ${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+// Who cancelled it — the actual Google-account name of whoever was logged in
+// at the time (same name the clients table shows), stamped server-side by the
+// DB trigger from the request's own auth (see schema.sql), so it can't be
+// spoofed from the client. An expired, never-decided urgent request was never
+// actively cancelled by anyone, so it gets its own label instead.
+function cancelledByLabel(a) {
+  if (a.status === 'pending_urgent_approval') return 'פג תוקף אוטומטית';
+  return a.cancelled_by || null;
+}
+
+// The admin appointments list only shows what's still recent — past that, a
+// row stays in the database (reports and the Excel export are unaffected) but
+// drops off this screen so the list doesn't keep growing forever.
+const APPT_DISPLAY_CUTOFF_DAYS = 45;
+function withinDisplayWindow(a) {
+  return a.date >= dateStrOffset(-APPT_DISPLAY_CUTOFF_DAYS);
+}
+
+// Still holds its time slot: not cancelled, and not a declined urgent request
+// (a rejected one never got the slot, or gave it up — same as cancelled). An
+// unresolved pending_urgent_approval still counts, so Moriya's own scheduling
+// views don't let her double-book over a request she hasn't decided on yet.
+const occupiesSlot = a => a.status !== 'cancelled' && a.status !== 'rejected';
+
+// A real, counted appointment for revenue/KPI/stat purposes — also excludes
+// an urgent request that isn't (or wasn't) actually approved.
+const isCountedAppt = a => occupiesSlot(a) && a.status !== 'pending_urgent_approval';
+
+// Do two appointments occupy overlapping time on the same day? Used to find
+// which other pending urgent requests lose the slot when one is approved.
+function overlaps(a, b) {
+  if (a.date !== b.date) return false;
+  const toMinutes = t => { const [h, m] = t.slice(0, 5).split(':').map(Number); return h * 60 + m; };
+  const aStart = toMinutes(a.start_time), aEnd = aStart + (Number(a.duration_min) || 0);
+  const bStart = toMinutes(b.start_time), bEnd = bStart + (Number(b.duration_min) || 0);
+  return aStart < bEnd && bStart < aEnd;
+}
 
 // Narrow upcoming appointments to a relative time window from now.
 // Windows are cumulative: 24h = next 24 hours, week = next 7 days,
@@ -1316,22 +1461,46 @@ function applyWindowFilter(list) {
   });
 }
 
+// Each tab has its own fixed order: upcoming and pending read soonest-first,
+// done and cancelled read most-recent-first, and 'all' stays chronological
+// (oldest to farthest-future) since it spans both directions.
+function sortAppointments(list) {
+  if (dash.apptFilter === 'cancelled') {
+    // Older rows cancelled before cancelled_at existed have no timestamp to
+    // sort by, so they fall to the bottom rather than break the order.
+    list.sort((a, b) => (cancelTimestamp(b)?.getTime() || 0) - (cancelTimestamp(a)?.getTime() || 0));
+  } else {
+    list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
+    // Completed appointments read newest first: the one Moriya just finished
+    // — and is most likely here to correct — is at the top.
+    if (dash.apptFilter === 'done') list.reverse();
+  }
+  return list;
+}
+
 function renderAppointments() {
   const box = document.getElementById('admin-appts');
   const today = todayStr();
   let list = dash.appointments.slice();
   if (dash.apptFilter === 'upcoming') {
-    list = list.filter(a => a.date >= today && a.status !== 'cancelled' && !isPastAppt(a));
+    // Not yet actually booked, so they don't belong among confirmed upcoming
+    // appointments — they live in their own 'pending' tab instead.
+    list = list.filter(a =>
+      a.date >= today && !isPastAppt(a) &&
+      !['cancelled', 'pending_urgent_approval', 'rejected'].includes(a.status));
     list = applyWindowFilter(list);
+  } else if (dash.apptFilter === 'pending') {
+    // An expired, still-undecided request moves to the cancelled tab instead.
+    list = list.filter(a => a.status === 'pending_urgent_approval' && !isPastAppt(a));
   } else if (dash.apptFilter === 'cancelled') {
-    list = list.filter(a => a.status === 'cancelled');
+    list = list.filter(a => effectiveStatus(a) === 'cancelled');
   } else if (dash.apptFilter === 'done') {
     list = list.filter(isDoneAppt);
   }
-  list.sort((a, b) => (a.date + a.start_time).localeCompare(b.date + b.start_time));
-  // Completed appointments read newest first: the one Moriya just finished — and
-  // is most likely here to correct — is at the top.
-  if (dash.apptFilter === 'done') list.reverse();
+  // Old rows stay in the database for the reports and the Excel export, but
+  // fall off the admin screen once they're no longer recent.
+  list = list.filter(withinDisplayWindow);
+  sortAppointments(list);
 
   if (!list.length) {
     box.innerHTML = '<p class="avail-empty">אין תורים להצגה.</p>';
@@ -1341,36 +1510,55 @@ function renderAppointments() {
   box.innerHTML = list.map(a => {
     const time = (a.start_time || '').slice(0, 5);
     const svc = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
-    const cancelled = a.status === 'cancelled';
-    const past      = !cancelled && isPastAppt(a);
-    // A past appointment is shown as completed; its date and hour are locked,
-    // but the treatments on it stay editable (see openServiceEditor).
     const statusKey   = effectiveStatus(a);
     const statusLabel = STATUS_HE[statusKey] || statusKey;
+    // "Cancelled-like" covers both a real cancellation and an urgent request
+    // that expired without a decision — effectiveStatus() reads both as
+    // 'cancelled', so they share the same card treatment below.
+    const cancelledLike = statusKey === 'cancelled';
+    // A past appointment is shown as completed; its date and hour are locked,
+    // but the treatments on it stay editable (see openServiceEditor).
+    const past = !cancelledLike && isPastAppt(a);
     // Reminder only makes sense for an upcoming appointment that has a phone.
-    const canRemind = !cancelled && !past && a.client_phone;
+    const canRemind = !cancelledLike && !past && a.client_phone;
     const remindBtn = canRemind ? `<button class="appt-btn remind" data-id="${a.id}">💬 שלחי תזכורת</button>` : '';
     // An appointment Moriya moved gets its own notice, so the client hears about
     // the new time from her rather than discovering it.
     const movedBtn = canRemind && movedAppts.has(String(a.id))
       ? `<button class="appt-btn moved" data-id="${a.id}">💬 הודעה על ההזזה</button>` : '';
     // A cancelled appointment keeps one action: telling the client it's off.
-    const cancelledBtn = cancelled && cancelledAppts.has(String(a.id)) && a.client_phone
+    // An auto-expired pending request was never actively cancelled by Moriya,
+    // so cancelledAppts never has its id and this stays empty for it — no
+    // separate branch needed.
+    const cancelledBtn = cancelledLike && cancelledAppts.has(String(a.id)) && a.client_phone
       ? `<button class="appt-btn moved" data-act="cancel-notice" data-id="${a.id}">💬 הודעה על הביטול</button>` : '';
+    // A declined urgent request keeps the same kind of one-off notice.
+    const rejectedBtn = statusKey === 'rejected' && rejectedAppts.has(String(a.id)) && a.client_phone
+      ? `<button class="appt-btn moved" data-act="decline-notice" data-id="${a.id}">💬 הודעה על הדחייה</button>` : '';
     // What was actually done at the appointment is only known once it is over —
     // clients add treatments on the spot — so a completed appointment keeps one
     // action: correcting its treatment list.
     const servicesBtn = `<button class="appt-btn services" data-id="${a.id}">💅 עריכת טיפולים</button>`;
-    const actions = cancelled ? cancelledBtn : past ? servicesBtn : `
+    const pendingBtns = `
+      <button class="appt-btn approve" data-id="${a.id}">✅ אישור</button>
+      <button class="appt-btn reject" data-id="${a.id}">❌ דחייה</button>`;
+    const actions = statusKey === 'pending_urgent_approval' ? pendingBtns
+      : statusKey === 'rejected' ? rejectedBtn
+      : cancelledLike ? cancelledBtn : past ? servicesBtn : `
       ${movedBtn}
       ${remindBtn}
       <button class="appt-btn edit" data-id="${a.id}">הזזה</button>
       <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`;
-    return `<div class="admin-appt-card ${cancelled ? 'is-cancelled' : ''}${past ? ' is-past' : ''}">
+    const cancelTs = cancelledLike ? cancelTimestamp(a) : null;
+    const cancelBy = cancelledLike ? cancelledByLabel(a) : null;
+    const cancelledAt = cancelTs
+      ? `<div class="aac-cancelled-at">🚫 בוטל ב-${fmtDateTime(cancelTs)}${cancelBy ? ` ע"י ${cancelBy}` : ''}</div>` : '';
+    return `<div class="admin-appt-card ${cancelledLike ? 'is-cancelled' : ''}${past ? ' is-past' : ''}">
       <div class="aac-main">
         <div class="aac-when"><strong>📅 ${fmtDate(a.date)}</strong> · ⏰ ${time} <span class="aac-dow">(${dowLabel(a.date)})</span></div>
         <div class="aac-client">👤 ${a.client_name} · 📞 ${a.client_phone || '—'}</div>
         <div class="aac-svc">${svc}</div>
+        ${cancelledAt}
       </div>
       <div class="aac-side">
         <span class="aac-price">${ils(Number(a.total_price || 0))}</span>
@@ -1383,14 +1571,22 @@ function renderAppointments() {
 
   box.querySelectorAll('.appt-btn.remind').forEach(b =>
     b.addEventListener('click', () => sendReminder(b.dataset.id)));
-  box.querySelectorAll('.appt-btn.moved').forEach(b => b.addEventListener('click', () =>
-    (b.dataset.act === 'cancel-notice' ? sendCancelNotice : sendMoveNotice)(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.moved').forEach(b => b.addEventListener('click', () => {
+    const fn = b.dataset.act === 'cancel-notice' ? sendCancelNotice
+             : b.dataset.act === 'decline-notice' ? sendDeclineNotice
+             : sendMoveNotice;
+    fn(b.dataset.id);
+  }));
   box.querySelectorAll('.appt-btn.edit').forEach(b =>
     b.addEventListener('click', () => openReschedule(b.dataset.id)));
   box.querySelectorAll('.appt-btn.services').forEach(b =>
     b.addEventListener('click', () => openServiceEditor(b.dataset.id)));
   box.querySelectorAll('.appt-btn.cancel').forEach(b =>
     b.addEventListener('click', () => adminCancel(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.approve').forEach(b =>
+    b.addEventListener('click', () => adminApprove(b.dataset.id)));
+  box.querySelectorAll('.appt-btn.reject').forEach(b =>
+    b.addEventListener('click', () => adminReject(b.dataset.id)));
 }
 
 // ─── Clients table ──────────────────────────────────────────────────────────────
@@ -1673,9 +1869,13 @@ async function deleteClient(btn) {
 
 // Tally a client's appointments by status (matched on user_id). Counted by the
 // effective status, so an appointment that has already happened shows up as
-// completed rather than still-upcoming.
+// completed rather than still-upcoming, and an urgent request that expired
+// without a decision counts as cancelled (see effectiveStatus()). A still-open
+// request or a declined one never became a real appointment, so those alone
+// are excluded — same as staying out of every bucket in the pie chart below.
 function clientStats(clientId) {
-  const appts = dash.appointments.filter(a => a.user_id === clientId);
+  const appts = dash.appointments.filter(a =>
+    a.user_id === clientId && !['pending_urgent_approval', 'rejected'].includes(effectiveStatus(a)));
   const by = s => appts.filter(a => effectiveStatus(a) === s).length;
   return {
     total:     appts.length,
@@ -1924,6 +2124,86 @@ async function adminCancel(id) {
   offerCancelNotice(appt);
 }
 
+// Approve an urgent (<48h) request: create the calendar event now (reusing
+// /api/book, the same endpoint the normal booking flow uses — her own
+// accessToken is what lets it through the server-side 48h gate in
+// netlify/functions/book.js), then mark it booked. Any other pending request
+// still queued for the same slot automatically loses and is offered a decline
+// notice right after — see the "two clients, same slot" race in the plan.
+async function adminApprove(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt || appt.status !== 'pending_urgent_approval') return;
+  const ok = await confirmDialog({
+    icon:        '✅',
+    title:       'אישור בקשה דחופה',
+    message:     `הבקשה של ${appt.client_name} ל-${fmtDate(appt.date)} בשעה ${appt.start_time.slice(0, 5)} תאושר ותיווסף ליומן.`,
+    confirmText: 'כן, אשרי',
+    cancelText:  'חזרה',
+    tone:        'safe',
+  });
+  if (!ok) return;
+
+  const accessToken = await getAccessToken();
+  let eventId = null;
+  try {
+    const r = await fetch(`${API_BASE}/api/book`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        date: appt.date, time: appt.start_time.slice(0, 5), duration: appt.duration_min,
+        clientName: appt.client_name, clientPhone: appt.client_phone, notes: appt.notes,
+        services: appt.services, totalPrice: appt.total_price, userId: appt.user_id, accessToken,
+      }),
+    });
+    if (r.ok) { const data = await r.json().catch(() => ({})); eventId = data.eventId || null; }
+  } catch (e) { console.warn('urgent approve calendar create failed:', e.message); }
+
+  if (!eventId) { alert('יצירת האירוע ביומן נכשלה — נסי שוב.'); return; }
+
+  const { error } = await MoriyaAuth.sb.from('appointments')
+    .update({ status: 'booked', google_event_id: eventId }).eq('id', id);
+  if (error) { alert('האישור נכשל: ' + error.message); return; }
+  appt.status = 'booked';
+  appt.google_event_id = eventId;
+
+  const losers = dash.appointments.filter(a =>
+    a.status === 'pending_urgent_approval' && String(a.id) !== String(id) && overlaps(a, appt));
+  for (const loser of losers) {
+    const { error: loserErr } = await MoriyaAuth.sb.from('appointments')
+      .update({ status: 'rejected' }).eq('id', loser.id);
+    if (loserErr) { console.warn('auto-reject failed:', loserErr.message); continue; }
+    loser.status = 'rejected';
+    rejectedAppts.add(String(loser.id));
+  }
+
+  renderKPIs(); renderCharts(); renderAppointments(); refreshDayView();
+  await offerApprovedNotice(appt);
+  for (const loser of losers) await offerDeclineNotice(loser);
+}
+
+// Decline an urgent request. It never reached the calendar, so nothing to
+// undo there — just mark it and offer to tell the client.
+async function adminReject(id) {
+  const appt = dash.appointments.find(a => String(a.id) === String(id));
+  if (!appt || appt.status !== 'pending_urgent_approval') return;
+  const ok = await confirmDialog({
+    icon:        '❌',
+    title:       'דחיית בקשה',
+    message:     `הבקשה של ${appt.client_name} ל-${fmtDate(appt.date)} בשעה ${appt.start_time.slice(0, 5)} תידחה. היא לא נמצאת ביומן ולא תתווסף אליו.`,
+    confirmText: 'כן, דחי את הבקשה',
+    cancelText:  'חזרה',
+    tone:        'danger',
+  });
+  if (!ok) return;
+
+  const { error } = await MoriyaAuth.sb.from('appointments').update({ status: 'rejected' }).eq('id', id);
+  if (error) { alert('הדחייה נכשלה: ' + error.message); return; }
+  appt.status = 'rejected';
+
+  rejectedAppts.add(String(appt.id));
+  renderKPIs(); renderAppointments();
+  offerDeclineNotice(appt);
+}
+
 // ── Reschedule modal ──
 let reschedTarget = null;
 let reschedSelDate = null;
@@ -2034,9 +2314,11 @@ function reschedConflict(dateStr, day, start) {
   const wins = MoriyaSchedule.openWindows(dateStr, day);
   if (!wins.some(w => start >= w.start && end <= w.end)) return 'מחוץ לשעות העבודה';
 
-  // Another client would have to move for this one.
+  // Another client would have to move for this one. A rejected urgent request
+  // never held the slot, same as cancelled.
   const clash = dash.appointments.find(a => {
-    if (a.date !== dateStr || a.status === 'cancelled' || String(a.id) === String(reschedTarget.id)) return false;
+    if (a.date !== dateStr || a.status === 'cancelled' || a.status === 'rejected' ||
+        String(a.id) === String(reschedTarget.id)) return false;
     const s = toMin((a.start_time || '00:00').slice(0, 5));
     return start < s + (Number(a.duration_min) || 0) && end > s;
   });
@@ -2067,7 +2349,7 @@ async function reschedFreeStarts(dateStr) {
 
   // The appointment being moved doesn't block itself.
   const busy = dash.appointments
-    .filter(a => a.date === dateStr && a.status !== 'cancelled' && String(a.id) !== String(reschedTarget.id))
+    .filter(a => a.date === dateStr && occupiesSlot(a) && String(a.id) !== String(reschedTarget.id))
     .map(a => {
       const s = toMin((a.start_time || '00:00').slice(0, 5));
       return { start: s, end: s + (Number(a.duration_min) || 0) };
@@ -2480,17 +2762,26 @@ function wireControls() {
   const exportBtn = document.getElementById('export-xlsx');
   if (exportBtn) exportBtn.addEventListener('click', exportToExcel);
 
-  const subfilters = document.getElementById('appt-subfilters');
   document.querySelectorAll('#appt-filters .range-tab').forEach(tab => {
     tab.addEventListener('click', () => {
-      document.querySelectorAll('#appt-filters .range-tab').forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
-      dash.apptFilter = tab.dataset.filter;
-      // The time-window sub-filters only make sense for the upcoming view.
-      if (subfilters) subfilters.style.display = dash.apptFilter === 'upcoming' ? '' : 'none';
+      activateApptFilter(tab.dataset.filter);
       renderAppointments();
     });
   });
+
+  // The pending-approvals KPI tile doubles as a shortcut into that filter.
+  const pendingCard = document.getElementById('kpi-pending-card');
+  if (pendingCard) {
+    const goToPending = () => {
+      activateApptFilter('pending');
+      renderAppointments();
+      document.getElementById('admin-appts')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    };
+    pendingCard.addEventListener('click', goToPending);
+    pendingCard.addEventListener('keydown', e => {
+      if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); goToPending(); }
+    });
+  }
 
   document.querySelectorAll('#appt-subfilters .range-tab').forEach(tab => {
     tab.addEventListener('click', () => {

@@ -861,20 +861,28 @@ async function getDayWindows(dateStr) {
   return byDate.get(dateStr) || {};
 }
 
-// Busy intervals for a day, cached so the calendar can check every open day
-// without re-hitting the backend on each re-render. On error we treat the day
-// as free (safe default – the day stays available).
-const busySlotsCache = new Map(); // dateStr → [{start,end}]
+// Busy intervals for a day, cached briefly so the calendar's per-day room
+// check and the slot picker (opened moments later, for the same date) don't
+// both hit the backend. Short TTL, not session-long: this is purely to kill
+// that one back-to-back re-fetch, not to serve minutes-old availability.
+const busySlotsCache = new Map(); // dateStr → { ts, busy }
+const BUSY_CACHE_TTL_MS = 20000;
 async function getBusySlots(dateStr) {
-  if (busySlotsCache.has(dateStr)) return busySlotsCache.get(dateStr);
-  let busy = [];
+  const cached = busySlotsCache.get(dateStr);
+  if (cached && (Date.now() - cached.ts) < BUSY_CACHE_TTL_MS) return cached.busy;
   try {
     const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
     const data = await res.json();
-    busy = data.busySlots || [];
-  } catch (e) { /* backend unreachable → treat as free */ }
-  busySlotsCache.set(dateStr, busy);
-  return busy;
+    const busy = data.busySlots || [];
+    busySlotsCache.set(dateStr, { ts: Date.now(), busy });
+    return busy;
+  } catch (e) {
+    // Backend unreachable — don't cache the failure (so the next read
+    // retries instead of treating the day as free for the rest of the
+    // session). Fall back to the last known value if we have one, else
+    // treat as free (safe default – the day stays available).
+    return cached ? cached.busy : [];
+  }
 }
 
 // Remove [s,e) from a list of busy intervals, splitting any interval it cuts
@@ -1023,15 +1031,10 @@ async function loadTimeSlots(dateStr) {
   slotsBox.style.display = 'block';
   slotsGrid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות פנויות…</span></div>';
 
-  let busySlots = [];
-  try {
-    const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
-    const data = await res.json();
-    busySlots  = data.busySlots || [];
-  } catch (e) {
-    // Backend not connected yet – show all slots as available
-    console.warn('Backend not reachable, showing all slots as available');
-  }
+  // renderCalendar() already fetched (and cached) this date's busy slots while
+  // checking which days in the month still have room, so reuse that instead of
+  // hitting the calendar backend a second time right when the client is waiting.
+  let busySlots = await getBusySlots(dateStr);
 
   // A logged-in client may book more than one appointment per day. If she
   // already has one on this date, show a friendly note (but still allow it) and
@@ -1397,41 +1400,55 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
         { time: state.selectedTime, duration: state.totalTime, services, totalPrice: state.totalPrice }
       ];
 
-  // 1) Create the Google Calendar event(s) (existing backend) — one call per leg.
+  // A slot less than 48h away doesn't go straight to the calendar — it waits
+  // for Moriya's approval (same threshold as the "התורים שלי" edit lock, see
+  // canEdit below). She approves or rejects it from the admin dashboard
+  // (js/admin.js adminApprove()/adminReject()), which is the only place that
+  // still creates the calendar event for a slot this close. Both legs share
+  // the same urgency verdict — the few minutes between them never crosses the
+  // 48h line on its own.
+  const requestedStart = new Date(`${state.selectedDate}T${state.selectedTime}`);
+  const isUrgent = (requestedStart.getTime() - Date.now()) < 48 * 60 * 60 * 1000;
+
+  // 1) Create the Google Calendar event(s) now (existing backend) — one call
+  //    per leg, skipped entirely for an urgent request, whose event(s) are
+  //    created only once approved.
   const googleEventIds = [];
   for (const leg of legs) {
     let eventId = null;
-    try {
-      const res = await fetch(`${API_BASE}/api/book`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date:        state.selectedDate,
-          time:        leg.time,
-          duration:    leg.duration,
-          clientName:  name,
-          clientPhone: phone,
-          notes,
-          services:    leg.services,
-          totalPrice:  leg.totalPrice,
-          userId:      MoriyaAuth.user.id
-        })
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        eventId = data.eventId || null;
+    if (!isUrgent) {
+      try {
+        const res = await fetch(`${API_BASE}/api/book`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date:        state.selectedDate,
+            time:        leg.time,
+            duration:    leg.duration,
+            clientName:  name,
+            clientPhone: phone,
+            notes,
+            services:    leg.services,
+            totalPrice:  leg.totalPrice,
+            userId:      MoriyaAuth.user.id
+          })
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          eventId = data.eventId || null;
+        }
+      } catch (err) {
+        console.warn('Calendar booking failed (demo mode?):', err.message);
       }
-    } catch (err) {
-      console.warn('Calendar booking failed (demo mode?):', err.message);
     }
     googleEventIds.push(eventId);
   }
 
   // 2) Save to Supabase (profile + one appointment row per leg). Booking is
   //    gated on a session, so this always runs and every appointment reaches
-  //    Moriya's dashboard. Both rows go in a single insert() call so they land
+  //    Moriya's dashboard. All rows go in a single insert() call so they land
   //    together — Postgres runs a multi-row VALUES list as one statement, so
-  //    either both rows are written or neither is.
+  //    either all rows are written or none are.
   let saveFailed = false;
   try {
     const uid = MoriyaAuth.user.id;
@@ -1455,12 +1472,15 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
       duration_min:    leg.duration,
       services:        leg.services,
       total_price:     leg.totalPrice,
-      status:          'booked',
+      status:          isUrgent ? 'pending_urgent_approval' : 'booked',
       google_event_id: googleEventIds[i],
       notes:           notes || null
     }));
     const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert(rows);
     if (apptErr) throw new Error(apptErr.message);
+    // The slot she just took is now busy — drop the cached read so anyone
+    // (including her, booking a second appointment) sees it as taken.
+    busySlotsCache.delete(state.selectedDate);
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
     saveFailed = true;
@@ -1478,7 +1498,28 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     return;
   }
 
-  showSuccess(name, phone, notes);
+  // Best-effort — must never block the success screen the client already earned.
+  // Each leg gets its own notice, since each is its own pending appointment
+  // that Moriya approves or rejects independently in the admin dashboard.
+  if (isUrgent) {
+    await Promise.all(legs.map(leg => fetch(`${API_BASE}/api/manage-booking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:      'notify-urgent',
+        date:        state.selectedDate,
+        time:        leg.time,
+        duration:    leg.duration,
+        clientName:  name,
+        clientPhone: phone,
+        notes,
+        services:    leg.services,
+        totalPrice:  leg.totalPrice
+      })
+    }).catch(err => console.warn('Urgent approval notice failed:', err.message))));
+  }
+
+  showSuccess(name, phone, notes, isUrgent);
 });
 
 // Format a 'YYYY-MM-DD' date as a friendly Hebrew string, e.g. "יום שישי, 27 ביוני 2026".
@@ -1491,9 +1532,14 @@ function formatHebrewDate(dateStr) {
 }
 
 // Fill the confirmation card with appointment details and show the success step.
-function renderSuccessCard({ heading, subtitle, treatments, duration, durationMinutes, price }) {
+// `isPending` is true for an urgent (<48h) request awaiting Moriya's approval:
+// there is no calendar event yet, so the "add to my calendar" link and the
+// wording that implies a set appointment are both hidden/adjusted for it.
+function renderSuccessCard({ heading, subtitle, treatments, duration, durationMinutes, price, isPending }) {
+  const iconEl     = document.getElementById('success-icon');
   const headingEl  = document.querySelector('#step-success h3');
   const subtitleEl = document.getElementById('success-subtitle');
+  if (iconEl)     iconEl.textContent     = isPending ? '⏳' : '🎉';
   if (headingEl)  headingEl.textContent  = heading;
   if (subtitleEl) subtitleEl.textContent = subtitle;
 
@@ -1506,7 +1552,17 @@ function renderSuccessCard({ heading, subtitle, treatments, duration, durationMi
   treatEl.innerHTML = treatments.map(t => `<span class="sc-treatment-item">${t}</span>`).join('');
 
   const gcalEl = document.getElementById('sc-gcal');
-  if (gcalEl) gcalEl.href = buildGoogleCalendarUrl(treatments, durationMinutes, price);
+  if (gcalEl) {
+    gcalEl.style.display = isPending ? 'none' : '';
+    if (!isPending) gcalEl.href = buildGoogleCalendarUrl(treatments, durationMinutes, price);
+  }
+
+  const noteTextEl = document.getElementById('success-time-note-text');
+  if (noteTextEl) {
+    noteTextEl.textContent = isPending
+      ? 'התור עדיין לא נכנס ליומן — תקבלי עדכון ברגע שמוריה תאשר או תדחה את הבקשה'
+      : 'שימי לב כי ייתכן שינוי קל בשעת התור, ותישלח על כך התראה מראש';
+  }
 
   showStep('success');
 }
@@ -1536,7 +1592,7 @@ function buildGoogleCalendarUrl(treatments, durationMinutes, priceText) {
   return `https://calendar.google.com/calendar/render?${params.toString()}`;
 }
 
-function showSuccess(name, phone, notes) {
+function showSuccess(name, phone, notes, isPending) {
   const treatments = [
     ...(state.baseIncluded ? [state.baseName] : []),
     ...state.addons.map(a => a.name)
@@ -1545,12 +1601,15 @@ function showSuccess(name, phone, notes) {
 
   const hasInPersonPrice = state.addons.some(a => a.priceLabel);
   renderSuccessCard({
-    heading:    'התור נקבע בהצלחה!',
-    subtitle:   'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
+    heading:    isPending ? 'הבקשה לתור שלך נשלחה לאישור מוריה' : 'התור נקבע בהצלחה!',
+    subtitle:   isPending
+      ? 'בבקשה לתור של פחות מ-48 שעות מראש, נדרש את אישור מוריה בשביל לקבוע את התור. תקבלי עדכון בהקדם 💗'
+      : 'ההזמנה נרשמה ביומן של מוריה. אשמח לראות אותך! 💅',
     treatments,
     duration:       formatDuration(state.totalTime),
     durationMinutes: state.totalTime,
-    price:      `${state.totalPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי (ייקבע בתור)' : ''}`
+    price:      `${state.totalPrice} ₪${hasInPersonPrice ? ' + עיצוב אישי (ייקבע בתור)' : ''}`,
+    isPending
   });
 }
 
@@ -1655,19 +1714,36 @@ window.openMyAppointments = openMyAppointments;
 
 function renderApptsList(appts) {
   const list = document.getElementById('appts-list');
-  if (!appts.length) {
+
+  // An urgent request Moriya never got to before its own slot time passed is
+  // dropped here rather than shown — it never held the slot and never reached
+  // the calendar, and the admin dashboard reads the same one as cancelled
+  // (see effectiveStatus() in js/admin.js).
+  const visible = appts.filter(a => {
+    if (a.status !== 'pending_urgent_approval') return true;
+    return new Date(`${a.date}T${a.start_time}`).getTime() > Date.now();
+  });
+
+  if (!visible.length) {
     list.innerHTML = '<p class="appts-empty">אין לך תורים קרובים 💅<br/>ניתן לקבוע תור חדש בכל עת</p>';
     return;
   }
 
-  list.innerHTML = appts.map(a => {
+  list.innerHTML = visible.map(a => {
     const [Y, M, D]  = a.date.split('-');
     const dateLabel  = `${D}/${M}/${Y}`;
     const timeLabel  = (a.start_time || '').slice(0, 5);
     const start      = new Date(`${a.date}T${a.start_time}`);
     const canEdit    = (start.getTime() - Date.now()) > 48 * 60 * 60 * 1000; // up to 2 days before
     const svc        = (a.services || []).map(s => s.name).join(', ') || "מניקור לק ג'ל";
-    const actions    = canEdit
+    // A pending/rejected urgent request has no calendar event, so it never
+    // offers the normal edit/cancel actions — those only apply once Moriya
+    // has decided (see js/admin.js adminApprove()/adminReject()).
+    const actions    = a.status === 'pending_urgent_approval'
+      ? `<span class="appt-locked">🕐 בקשה ממתינה לאישור מוריה</span>`
+      : a.status === 'rejected'
+      ? `<span class="appt-locked">הבקשה לא אושרה — ניתן לקבוע תור חדש</span>`
+      : canEdit
       ? `<button class="appt-btn edit"   data-id="${a.id}">שינוי</button>
          <button class="appt-btn cancel" data-id="${a.id}">ביטול</button>`
       : `<span class="appt-locked">לא ניתן לשנות (פחות מ-48 שעות)</span>`;
@@ -1711,6 +1787,8 @@ async function cancelAppointment(id, appts) {
     }
     // 2) Mark the appointment cancelled in Supabase.
     await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
+    // The freed slot should show as available again on the next calendar view.
+    if (appt) busySlotsCache.delete(appt.date);
   } catch (e) { console.warn('cancel failed:', e.message); }
   openMyAppointments();
 }
@@ -2039,6 +2117,9 @@ async function updateAppointment() {
       services:     mergedServices,
       status:       needsApproval ? 'pending_approval' : 'booked'
     }).eq('id', editingAppointment.id);
+    // Both the old date (now freed) and the new one (now taken) need a fresh read.
+    busySlotsCache.delete(editingAppointment.date);
+    busySlotsCache.delete(state.selectedDate);
   } catch (e) { console.warn('update failed:', e.message); }
 
   const svc = mergedServices.map(s => s.name);
