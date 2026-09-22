@@ -50,3 +50,10 @@
 # Runs 07:00 UTC daily (~10:00 Israel); only emails when that day has bookings.
 [functions."reminder-nudge"]
   schedule = "0 7 * * *"
+
+# ─── Weekly database backup: email Moriya a full JSON export of every table ───
+# (Supabase free tier has no automatic backups). Runs Saturday 18:00 UTC, which
+# is ~21:00 Israel time (IDT) — close to the end of Shabbat. Like reminder-nudge,
+# this drifts an hour under winter clock (IST) since the schedule is UTC-fixed.
+[functions."backup"]
+  schedule = "0 18 * * 6"
