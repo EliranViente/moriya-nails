@@ -1379,45 +1379,76 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     ...state.addons
   ];
 
+  // Hands and feet are booked together but Moriya wants them landing as two
+  // separate, independently cancellable/movable appointments back-to-back,
+  // rather than one long combined one. Split only when both sides are actually
+  // present — a hands-only or feet-only booking still becomes one appointment,
+  // exactly as before.
+  const handsServices = services.filter(a => !a.separate);
+  const feetServices  = services.filter(a => a.separate);
+  const sumTime  = list => list.reduce((s, a) => s + a.time,  0);
+  const sumPrice = list => list.reduce((s, a) => s + a.price, 0);
+
+  const legs = (handsServices.length && feetServices.length)
+    ? [
+        { time: state.selectedTime, duration: sumTime(handsServices),
+          services: handsServices, totalPrice: sumPrice(handsServices) },
+        { time: MoriyaSchedule.fromMin(MoriyaSchedule.toMin(state.selectedTime) + sumTime(handsServices)),
+          duration: sumTime(feetServices), services: feetServices, totalPrice: sumPrice(feetServices) }
+      ]
+    : [
+        { time: state.selectedTime, duration: state.totalTime, services, totalPrice: state.totalPrice }
+      ];
+
   // A slot less than 48h away doesn't go straight to the calendar — it waits
   // for Moriya's approval (same threshold as the "התורים שלי" edit lock, see
   // canEdit below). She approves or rejects it from the admin dashboard
   // (js/admin.js adminApprove()/adminReject()), which is the only place that
-  // still creates the calendar event for a slot this close.
+  // still creates the calendar event for a slot this close. Both legs share
+  // the same urgency verdict — the few minutes between them never crosses the
+  // 48h line on its own.
   const requestedStart = new Date(`${state.selectedDate}T${state.selectedTime}`);
   const isUrgent = (requestedStart.getTime() - Date.now()) < 48 * 60 * 60 * 1000;
 
-  // 1) Create the Google Calendar event now (existing backend) — skipped for
-  //    an urgent request, whose event is created only once approved.
-  let googleEventId = null;
-  if (!isUrgent) {
-    try {
-      const res = await fetch(`${API_BASE}/api/book`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          date:        state.selectedDate,
-          time:        state.selectedTime,
-          duration:    state.totalTime,
-          clientName:  name,
-          clientPhone: phone,
-          notes,
-          services,
-          totalPrice:  state.totalPrice,
-          userId:      MoriyaAuth.user.id
-        })
-      });
-      if (res.ok) {
-        const data = await res.json().catch(() => ({}));
-        googleEventId = data.eventId || null;
+  // 1) Create the Google Calendar event(s) now (existing backend) — one call
+  //    per leg, skipped entirely for an urgent request, whose event(s) are
+  //    created only once approved.
+  const googleEventIds = [];
+  for (const leg of legs) {
+    let eventId = null;
+    if (!isUrgent) {
+      try {
+        const res = await fetch(`${API_BASE}/api/book`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            date:        state.selectedDate,
+            time:        leg.time,
+            duration:    leg.duration,
+            clientName:  name,
+            clientPhone: phone,
+            notes,
+            services:    leg.services,
+            totalPrice:  leg.totalPrice,
+            userId:      MoriyaAuth.user.id
+          })
+        });
+        if (res.ok) {
+          const data = await res.json().catch(() => ({}));
+          eventId = data.eventId || null;
+        }
+      } catch (err) {
+        console.warn('Calendar booking failed (demo mode?):', err.message);
       }
-    } catch (err) {
-      console.warn('Calendar booking failed (demo mode?):', err.message);
     }
+    googleEventIds.push(eventId);
   }
 
-  // 2) Save to Supabase (profile + appointment). Booking is gated on a session,
-  //    so this always runs and every appointment reaches Moriya's dashboard.
+  // 2) Save to Supabase (profile + one appointment row per leg). Booking is
+  //    gated on a session, so this always runs and every appointment reaches
+  //    Moriya's dashboard. All rows go in a single insert() call so they land
+  //    together — Postgres runs a multi-row VALUES list as one statement, so
+  //    either all rows are written or none are.
   let saveFailed = false;
   try {
     const uid = MoriyaAuth.user.id;
@@ -1432,19 +1463,20 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     // supabase-js reports a rejected write in the returned `error` rather than
     // throwing, so the result must be read — awaiting it bare would let a failed
     // insert pass for a successful one.
-    const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert({
+    const rows = legs.map((leg, i) => ({
       user_id:         uid,
       client_name:     name,
       client_phone:    phone,
       date:            state.selectedDate,
-      start_time:      state.selectedTime,
-      duration_min:    state.totalTime,
-      services:        services,
-      total_price:     state.totalPrice,
+      start_time:      leg.time,
+      duration_min:    leg.duration,
+      services:        leg.services,
+      total_price:     leg.totalPrice,
       status:          isUrgent ? 'pending_urgent_approval' : 'booked',
-      google_event_id: googleEventId,
+      google_event_id: googleEventIds[i],
       notes:           notes || null
-    });
+    }));
+    const { error: apptErr } = await MoriyaAuth.sb.from('appointments').insert(rows);
     if (apptErr) throw new Error(apptErr.message);
     // The slot she just took is now busy — drop the cached read so anyone
     // (including her, booking a second appointment) sees it as taken.
@@ -1454,12 +1486,12 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     saveFailed = true;
   }
 
-  // The appointment lives nowhere anyone can manage it, so take the calendar
-  // event back down too — otherwise the slot stays blocked by a booking that
-  // Moriya can't see and the client can't cancel — and say so instead of
-  // showing a success screen for an appointment that does not exist.
+  // The appointment(s) live nowhere anyone can manage them, so take the
+  // calendar event(s) back down too — otherwise the slot stays blocked by a
+  // booking that Moriya can't see and the client can't cancel — and say so
+  // instead of showing a success screen for an appointment that does not exist.
   if (saveFailed) {
-    await rollbackCalendarEvent(googleEventId);
+    await Promise.all(googleEventIds.map(rollbackCalendarEvent));
     btn.disabled    = false;
     btn.textContent = 'אשרי הזמנה ✓';
     showStep('error');
@@ -1467,26 +1499,24 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   }
 
   // Best-effort — must never block the success screen the client already earned.
+  // Each leg gets its own notice, since each is its own pending appointment
+  // that Moriya approves or rejects independently in the admin dashboard.
   if (isUrgent) {
-    try {
-      await fetch(`${API_BASE}/api/manage-booking`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          action:      'notify-urgent',
-          date:        state.selectedDate,
-          time:        state.selectedTime,
-          duration:    state.totalTime,
-          clientName:  name,
-          clientPhone: phone,
-          notes,
-          services,
-          totalPrice:  state.totalPrice
-        })
-      });
-    } catch (err) {
-      console.warn('Urgent approval notice failed:', err.message);
-    }
+    await Promise.all(legs.map(leg => fetch(`${API_BASE}/api/manage-booking`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        action:      'notify-urgent',
+        date:        state.selectedDate,
+        time:        leg.time,
+        duration:    leg.duration,
+        clientName:  name,
+        clientPhone: phone,
+        notes,
+        services:    leg.services,
+        totalPrice:  leg.totalPrice
+      })
+    }).catch(err => console.warn('Urgent approval notice failed:', err.message))));
   }
 
   showSuccess(name, phone, notes, isUrgent);
