@@ -566,6 +566,9 @@ function updateBookingSummary() {
   }
 }
 
+// Whether the feet page has already opened once in this flow — see openFeetStep().
+let feetDefaultApplied = false;
+
 // Reveal the route onto the feet page only to a client allowed to book it, clear
 // every feet selection the moment that access ends (signing out, or the admin
 // revoking it before a re-login) so nothing can ride along on a booking
@@ -575,9 +578,27 @@ function applyFeetGelAccess() {
   const btn = document.getElementById('go-feet');
   if (btn) btn.style.display = allowed ? '' : 'none';
   if (!allowed && currentBookingStep === 'feet') showStep(1);
+  // Losing access also drops the default below, so the next client to sign in
+  // on this page gets it applied for herself rather than inheriting the flag.
+  if (!allowed) feetDefaultApplied = false;
   recalculate();   // collectFeetSelection() clears the checkboxes when barred
 }
 document.addEventListener('moriya-auth-changed', applyFeetGelAccess);
+
+// Opening the feet page is itself the client saying she wants the polish, so it
+// arrives already ticked. The tick can't live in the HTML: collectFeetSelection()
+// reads these boxes from step 1 too, so a default-checked one would put a 160 ₪
+// treatment on the booking of a client who never opened this page. Applied once,
+// so unticking the polish and coming back doesn't re-tick it behind her.
+function openFeetStep() {
+  const gel = document.getElementById('chk-feet-gel');
+  if (gel && !feetDefaultApplied && canBookFeetGel()) {
+    gel.checked = true;
+    feetDefaultApplied = true;
+    recalculate();   // unlocks the add-ons that need the polish, updates the total
+  }
+  showStep('feet');
+}
 
 // ─── The add-on option picker modal ──────────────────────────────────────────
 // Ticking a picker add-on opens it; unticking clears what was chosen inside.
@@ -900,7 +921,7 @@ function goToCalendarStep(from) {
 
 // Step 1 offers both onward routes: the calendar, or the feet gel-polish page.
 document.getElementById('go-step2').addEventListener('click', () => goToCalendarStep(1));
-document.getElementById('go-feet')?.addEventListener('click', () => showStep('feet'));
+document.getElementById('go-feet')?.addEventListener('click', () => openFeetStep());
 
 // Step 1B → Step 2, or back to the manicure.
 document.getElementById('feet-next')?.addEventListener('click', () => goToCalendarStep('feet'));
