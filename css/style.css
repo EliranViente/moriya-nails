@@ -2521,13 +2521,15 @@ label.rx-row { cursor: pointer; }
   .stars.stars-lg .star { font-size: 1.2rem; }
   .reviews-count { font-size: 0.88rem; }
   .reviews-toolbar {
-    flex-direction: column;
-    align-items: stretch;
-    gap: 14px;
+    flex-wrap: nowrap;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
     margin-bottom: 22px;
   }
-  .reviews-filter { justify-content: space-between; font-size: 0.86rem; }
-  .review-write-btn { width: 100%; text-align: center; }
+  .reviews-filter { flex: 1 1 auto; min-width: 0; gap: 6px; font-size: 0.72rem; }
+  .reviews-filter span:last-child { white-space: normal; }
+  .review-write-btn { flex-shrink: 0; padding: 8px 14px; font-size: 0.72rem; }
   .reviews-write-hint { text-align: center; }
   .reviews-list { gap: 14px; }
   .review-card { padding: 16px 18px; }
