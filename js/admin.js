@@ -977,12 +977,57 @@ async function loadWaitlist() {
   dash.waitlist = data || [];
 }
 
+// The shortest treatment on the booking menu (the base manicure) — any
+// opening at least this long counts as "a slot is free" for the date.
+const WL_BASE_MIN = 75;
+
+// The longest treatment (in 5-minute steps, from `need` down to the base
+// manicure) that fits somewhere on the day right now — 0 if not even that.
+function longestFit(need, date, day, busy) {
+  for (let d = need; d >= WL_BASE_MIN; d -= 5) {
+    if (MoriyaSchedule.availableStarts(d, date, day, busy).length) return d;
+  }
+  return 0;
+}
+
+// Where a waiter stands against the day: her treatment fits (and from when),
+// or how many minutes short the best opening is. Empty when nothing is open,
+// or for a row saved before the waitlist recorded what she asked for.
+function waiterFitNote(w, date, day, busy) {
+  const need = Number(w.duration_min);
+  if (!need) return '';
+  const fits = MoriyaSchedule.availableStarts(need, date, day, busy);
+  const first = (w.client_name || '').trim().split(/\s+/)[0] || 'הלקוחה';
+  if (fits.length) {
+    return `<span class="wl-fit ok">✅ יש מספיק זמן לתור ש${first} ביקשה (${fits.map(fromMin).join(', ')})</span>`;
+  }
+  const best = longestFit(need, date, day, busy);
+  if (!best) return '';
+  return `<span class="wl-fit short">⏳ חסרות ${need - best} דק׳ לתור ש${first} ביקשה</span>`;
+}
+
+// Every edit to a day's hours ends in loadDayWindows(), so this is the one
+// hook for "Moriya just made room": extending hours or removing a break can
+// fit a waiter's treatment as surely as a cancellation. Only dates with
+// someone not yet emailed ask the server; it re-checks and emails at most once.
+function checkWaitlistFor(date) {
+  const waiting = dash.waitlist.some(w => w.date === date && !w.notified_at && w.duration_min);
+  if (!waiting) return;
+  fetch(`${API_BASE}/api/waitlist-notify`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ date })
+  }).catch(() => {});
+  renderWaitlist();
+}
+
 // One group per waitlisted date, each showing whether a slot is open right
 // now (recomputed live from dash.appointments + that date's availability
 // rows — cheap here since this is a manually-viewed page, not a hot path —
 // rather than trusting a stored flag that could drift) and the ordered
-// (FIFO by signup) list of waiting clients, each with a manual WhatsApp
-// button enabled only when that date currently has an open slot.
+// (FIFO by signup) list of waiting clients. "Open" means a base manicure
+// fits; each client also gets a note on whether the treatment *she* asked
+// for fits, or how many minutes it's short. Her WhatsApp button is enabled
+// whenever the date has any opening, so Moriya can still offer a shorter one.
 async function renderWaitlist() {
   const box = document.getElementById('admin-waitlist');
   if (!box) return;
@@ -994,6 +1039,7 @@ async function renderWaitlist() {
 
   const dates = [...new Set(dash.waitlist.map(w => w.date))];
   const openByDate = {};
+  const dayByDate  = {};
   await Promise.all(dates.map(async date => {
     const { data: rows } = await MoriyaAuth.sb.from('availability').select('*').eq('date', date);
     const day  = MoriyaSchedule.readRows(rows || []);
@@ -1003,7 +1049,8 @@ async function renderWaitlist() {
         const s = toMin((a.start_time || '00:00').slice(0, 5));
         return { start: s, end: s + (Number(a.duration_min) || 0) };
       });
-    openByDate[date] = MoriyaSchedule.availableStarts(75, date, day, busy);
+    dayByDate[date]  = { day, busy };
+    openByDate[date] = MoriyaSchedule.availableStarts(WL_BASE_MIN, date, day, busy);
   }));
 
   box.innerHTML = dates.map(date => {
@@ -1011,11 +1058,16 @@ async function renderWaitlist() {
     const openLabel = open.length
       ? `🔔 יש תור פנוי! (${open.map(fromMin).join(', ')})`
       : 'אין כרגע תור פנוי';
+    const { day, busy } = dayByDate[date];
     const rows = dash.waitlist.filter(w => w.date === date).map(w => `
       <div class="wl-row">
         <span class="wl-name">${w.client_name}</span>
         <span class="wl-phone">${w.client_phone || ''}</span>
         <span class="wl-since">נרשמה ב-${fmtDate((w.created_at || '').slice(0, 10))}</span>
+        <span class="wl-wants">${w.duration_min
+          ? `ביקשה: ${w.services ? `${w.services} · ` : ''}${w.duration_min} דק׳`
+          : 'לא ידוע איזה טיפול ביקשה (נרשמה לפני שזה נשמר)'}</span>
+        ${open.length ? waiterFitNote(w, date, day, busy) : ''}
         <button class="appt-btn" data-wl-id="${w.id}" ${open.length ? '' : 'disabled'}>💬 הודיעי ללקוחה</button>
       </div>`).join('');
     return `
@@ -1458,6 +1510,7 @@ async function loadDayWindows(date) {
   dashDayRows = data || [];
   dashDay     = MoriyaSchedule.readRows(dashDayRows);
   updateAvailPreview();   // the preview now reflects this day's breaks
+  checkWaitlistFor(date);
 
   // Everything set here is saved right away; it just isn't offered to clients
   // until the rolling two-month window reaches this date.

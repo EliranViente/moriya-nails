@@ -510,6 +510,11 @@
 .wl-name { font-weight: 700; color: var(--gray-800); }
 .wl-phone { color: var(--gray-600); }
 .wl-since { color: var(--gray-400); font-size: 0.78rem; margin-inline-end: auto; }
+/* What she asked for, and whether it fits today — each on a line of its own. */
+.wl-wants { flex-basis: 100%; color: var(--gray-600); font-size: 0.8rem; }
+.wl-fit { flex-basis: 100%; font-size: 0.82rem; font-weight: 600; }
+.wl-fit.ok { color: #0a8a4a; }
+.wl-fit.short { color: #b7791f; }
 
 /* ── Clients table ── */
 /* The hint sits between the header row and the table when used standalone. */

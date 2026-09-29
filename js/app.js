@@ -2030,12 +2030,21 @@ async function joinWaitlist(dateStr) {
   });
   if (!ok) return;
 
+  // The day was full for *this* treatment, so what she picked is what an
+  // opening has to fit — Moriya's list and the email both measure against it.
+  const services = [
+    ...(state.baseIncluded ? [state.baseName] : []),
+    ...state.addons.map(a => a.name)
+  ].filter(Boolean);
+
   const { error } = await MoriyaAuth.sb.from('waitlist').insert({
     user_id:      MoriyaAuth.user.id,
     client_name:  MoriyaAuth.displayName(),
     client_phone: (MoriyaAuth.profile && MoriyaAuth.profile.phone) || '',
     date:         dateStr,
     status:       'waiting',
+    duration_min: state.totalTime || null,
+    services:     services.join(' · ') || null,
   });
   if (error) {
     // 23505 = unique_violation — she registered from another tab a moment ago.

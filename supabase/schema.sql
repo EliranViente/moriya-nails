@@ -279,11 +279,11 @@ where p.id = sub.user_id;
 
 -- ============================================================
 --  4) WAITLIST – Phase 1: a client registers interest in a fully-booked
---     Friday. When a slot on that date opens up (any cancellation/reschedule),
---     netlify/functions/waitlist-notify.js emails the admin the currently-open
---     times plus the ordered (created_at) list of not-yet-notified waiters for
---     that date, and stamps notified_at so each entry is only ever emailed
---     once. No slot is reserved for anyone – see js/admin.js's manual
+--     Friday. When that date changes (a cancellation, a reschedule, or Moriya
+--     editing its hours), netlify/functions/waitlist-notify.js emails the admin
+--     the not-yet-notified waiters whose requested treatment (duration_min)
+--     now fits, in signup order with the times that fit each, and stamps
+--     notified_at on just those so each entry is only ever emailed once. No slot is reserved for anyone – see js/admin.js's manual
 --     "הודיעי ללקוחה" button. Phase 2 (a real timed hold) may replace this.
 -- ============================================================
 create table if not exists public.waitlist (
@@ -297,6 +297,11 @@ create table if not exists public.waitlist (
   notified_at  timestamptz,
   created_at   timestamptz default now()
 );
+-- What she was trying to book when the day was full for her. An opening only
+-- counts as hers once it fits duration_min; null (rows from before this was
+-- recorded) is never auto-emailed, since no opening can be matched to her.
+alter table public.waitlist add column if not exists duration_min integer;
+alter table public.waitlist add column if not exists services     text;
 -- At most one active registration per client per date.
 create unique index if not exists idx_waitlist_active_unique
   on public.waitlist(user_id, date) where status = 'waiting';
