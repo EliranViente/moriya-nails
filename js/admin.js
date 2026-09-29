@@ -1625,7 +1625,7 @@ function timelineRow(date, item, wins) {
     // aren't slots anyone can take, so they carry no actions.
     if (!item.full) {
       const gap = item.end - item.start;
-      return gap < 15 ? '' : dtRow('is-gap', item, `רווח ${gap} דק׳ · לטיפול קצר`, '');
+      return gap < 15 ? '' : dtRow('is-gap', item, `😴 הפסקה מזדמנת · ${gap} דק׳`, '');
     }
     const win     = item.win || wins[0] || { end: item.end };
     const actions = past ? '' : `
@@ -1660,10 +1660,9 @@ function apptTimelineRow(item) {
 }
 
 function breakTimelineRow(item, past) {
-  // Fixed: the break that always sits in the schedule, and any break Moriya put
-  // there herself. Incidental: the floating one, which lands wherever the day's
-  // appointments push it.
-  const label = item.kind === 'float' ? '☕ הפסקה מזדמנת' : '⛔ הפסקה קבועה';
+  // A plain break is one of the day's scheduled pair from the Friday band (fixed
+  // or floating); a fixed break is one Moriya put there herself.
+  const label = item.kind === 'block' ? '⛔ הפסקה קבועה' : '☕ הפסקה';
   // A break the day inherits from the Friday default has no row of its own yet;
   // editing or removing one writes this date's own rows (see materializeBreaks).
   const id      = (item.ref && item.ref.id) || item.id || '';
@@ -1813,7 +1812,7 @@ async function breakRowId(date, brkKind, id) {
 }
 
 async function deleteBreak(date, brkKind, id) {
-  const what = brkKind === 'float' ? 'ההפסקה הצפה' : 'ההפסקה';
+  const what = { float: 'ההפסקה הצפה', block: 'ההפסקה הקבועה' }[brkKind] || 'ההפסקה';
   const ok = await confirmDialog({
     icon:        '🗑️',
     title:       `לבטל את ${what} ביום זה?`,
@@ -1836,11 +1835,13 @@ async function deleteBreak(date, brkKind, id) {
 function editBreak(date, brkKind, id, start, end) {
   const isFloat = brkKind === 'float';
   openTimeModal({
-    title:      isFloat ? 'שינוי ההפסקה הצפה' : 'שינוי ההפסקה',
+    title:      isFloat ? 'שינוי ההפסקה הצפה' : brkKind === 'block' ? 'שינוי ההפסקה הקבועה' : 'שינוי ההפסקה',
     sub:        `כרגע <span dir="ltr">${fromMin(start)}–${fromMin(end)}</span>`,
     hint:       isFloat
       ? 'נלקחת אחרי התור הראשון שמסתיים משעת ההתחלה, ואורכה לפי הטווח כאן.'
-      : 'קבועה בשעות שתגדירי. תור ארוך יכול לנגוס בה, אך לא לחצות אותה.',
+      : brkKind === 'block'
+        ? 'חסומה לגמרי בשעות שתגדירי — לא יוצעו בה תורים.'
+        : 'קבועה בשעות שתגדירי. תור ארוך יכול לנגוס בה, אך לא לחצות אותה.',
     start, end, withEnd: true,
     onSave: async (newStart, newEnd) => {
       if (newEnd <= newStart) return 'שעת הסיום חייבת להיות אחרי שעת ההתחלה';
@@ -2925,11 +2926,11 @@ function reschedConflict(dateStr, day, start) {
   // The fixed break is meant to be bitten into: an appointment may run into it
   // and stop at its end. Starting inside it, or running past it, is not biting.
   if (brk.big && ((start >= brk.big.start && start < brk.big.end) ||
-                  (start < brk.big.start && end > brk.big.end))) return 'נופלת בהפסקה קבועה';
+                  (start < brk.big.start && end > brk.big.end))) return 'נופלת בהפסקה';
   if ((day.block || []).some(b => start < b.end && end > b.start)) return 'נופלת בהפסקה קבועה';
   // The floating break isn't bitten, it's pushed — worth saying out loud.
   if (brk.float && end > brk.float.notBefore && start < brk.float.notBefore + brk.float.len) {
-    return 'תדחה את ההפסקה המזדמנת';
+    return 'תדחה את ההפסקה';
   }
   return null;
 }
