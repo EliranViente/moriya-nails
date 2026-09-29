@@ -258,11 +258,21 @@
     return items.sort((a, b) => a.start - b.start || a.end - b.end);
   }
 
+  // The longest treatment (in 5-minute steps, from `need` down to `floor`)
+  // that fits somewhere on the day right now — 0 if not even `floor` does.
+  // `need - longestFit(...)` is how many minutes an opening is short.
+  function longestFit(need, floor, dateStr, day, busy) {
+    for (let d = need; d >= floor; d -= 5) {
+      if (availableStarts(d, dateStr, day, busy).length) return d;
+    }
+    return 0;
+  }
+
   const api = {
     FRIDAY_BANDS, NOMINAL_SLOT,
     toMin, fromMin, isFriday, mergeIntervals, fridayBand,
     readRows, openWindows, usesDefaults, dayBreaks,
-    walkWindow, anchors, availableStarts, dayTimeline,
+    walkWindow, anchors, availableStarts, longestFit, dayTimeline,
   };
   // Loaded in the browser (window) and, for waitlist-notify.js, under Node
   // (module.exports) — same file, same math, so the two never drift apart.

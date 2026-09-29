@@ -981,15 +981,6 @@ async function loadWaitlist() {
 // opening at least this long counts as "a slot is free" for the date.
 const WL_BASE_MIN = 75;
 
-// The longest treatment (in 5-minute steps, from `need` down to the base
-// manicure) that fits somewhere on the day right now — 0 if not even that.
-function longestFit(need, date, day, busy) {
-  for (let d = need; d >= WL_BASE_MIN; d -= 5) {
-    if (MoriyaSchedule.availableStarts(d, date, day, busy).length) return d;
-  }
-  return 0;
-}
-
 // Where a waiter stands against the day: her treatment fits (and from when),
 // or how many minutes short the best opening is. Empty when nothing is open,
 // or for a row saved before the waitlist recorded what she asked for.
@@ -1001,7 +992,7 @@ function waiterFitNote(w, date, day, busy) {
   if (fits.length) {
     return `<span class="wl-fit ok">✅ יש מספיק זמן לתור ש${first} ביקשה (${fits.map(fromMin).join(', ')})</span>`;
   }
-  const best = longestFit(need, date, day, busy);
+  const best = MoriyaSchedule.longestFit(need, WL_BASE_MIN, date, day, busy);
   if (!best) return '';
   return `<span class="wl-fit short">⏳ חסרות ${need - best} דק׳ לתור ש${first} ביקשה</span>`;
 }

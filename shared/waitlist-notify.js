@@ -19,6 +19,13 @@
  */
 const MoriyaSchedule = require('../js/schedule.js');
 
+// An opening this many minutes (or fewer) short of what a client asked for is
+// still worth telling Moriya about: freeing that little extra time — a later
+// finish, a shorter break — lets the client book exactly what she wanted.
+const NEAR_MISS_MIN = 15;
+// The shortest treatment on the menu; nothing shorter is an opening at all.
+const BASE_MIN = 75;
+
 function dmy(dateStr) {
   const [y, m, d] = dateStr.split('-');
   return `${d}/${m}/${y}`;
@@ -27,7 +34,7 @@ function dmy(dateStr) {
 async function fetchWaitingRows(env, dateStr) {
   const url = `${env.url}/rest/v1/waitlist`
     + `?date=eq.${dateStr}&status=eq.waiting&notified_at=is.null`
-    + `&select=id,client_name,client_phone,duration_min,services,created_at`
+    + `&select=id,client_name,client_phone,duration_min,services,near_notified_at,created_at`
     + `&order=created_at.asc`;
   const res = await fetch(url, { headers: { apikey: env.key, Authorization: `Bearer ${env.key}` } });
   if (!res.ok) { console.warn('waitlist-notify: waitlist fetch failed', res.status); return []; }
@@ -50,7 +57,9 @@ async function fetchBusySlots(apiBaseUrl, dateStr) {
   return data && Array.isArray(data.busySlots) ? data.busySlots : null;
 }
 
-async function markNotified(env, ids) {
+// `column` – notified_at (her treatment fit; she's done) or near_notified_at
+// (an almost-fit was reported; a real fit can still be emailed later).
+async function markNotified(env, ids, column) {
   if (!ids.length) return;
   const url = `${env.url}/rest/v1/waitlist?id=in.(${ids.join(',')})`;
   const res = await fetch(url, {
@@ -59,24 +68,52 @@ async function markNotified(env, ids) {
       apikey: env.key, Authorization: `Bearer ${env.key}`,
       'Content-Type': 'application/json', Prefer: 'return=minimal'
     },
-    body: JSON.stringify({ notified_at: new Date().toISOString() })
+    body: JSON.stringify({ [column]: new Date().toISOString() })
   });
-  if (!res.ok) console.warn('waitlist-notify: notified_at stamp failed', res.status);
+  if (!res.ok) console.warn(`waitlist-notify: ${column} stamp failed`, res.status);
 }
 
-// `matches` – [{ waiter, times }], the waiters whose treatment fits, in signup
-// order, each with the start times that fit her treatment.
-function buildEmail(dateStr, matches, siteBaseUrl) {
-  const cell = 'padding:7px 10px;border-bottom:1px solid #f3d7e3';
-  const rows = matches.map(({ waiter: w, times }, i) => `<tr>
-      <td style="${cell};white-space:nowrap;vertical-align:top">${i + 1}.</td>
-      <td style="${cell}">
+// `fits` – [{ waiter, times }]: her treatment fits, at these start times.
+// `near` – [{ waiter, times, missing }]: the best opening is `missing` minutes
+// short of her treatment; `times` is where that opening starts.
+// Both lists are in signup order.
+function buildEmail(dateStr, fits, near, siteBaseUrl) {
+  const cell  = 'padding:7px 10px;border-bottom:1px solid #f3d7e3';
+  const times = t => t.map(MoriyaSchedule.fromMin).join(', ');
+  const who = w => `
         <b>${w.client_name || '—'}</b>
         <span style="color:#888;white-space:nowrap"> · ${w.client_phone || ''}</span><br>
-        <span style="color:#666;font-size:13px">${w.services ? `${w.services} · ` : ''}${w.duration_min} דק׳</span><br>
-        <span style="font-size:13px">שעות שמתאימות לה: <b>${times.map(MoriyaSchedule.fromMin).join(', ')}</b></span>
+        <span style="color:#666;font-size:13px">ביקשה: ${w.services ? `${w.services} · ` : ''}${w.duration_min} דק׳</span><br>`;
+  const table = rows => `
+        <table style="width:100%;border-collapse:collapse;margin:10px 0 18px;font-size:14px">
+          <tbody>${rows}</tbody>
+        </table>`;
+
+  const fitRows = fits.map(({ waiter: w, times: t }, i) => `<tr>
+      <td style="${cell};white-space:nowrap;vertical-align:top">${i + 1}.</td>
+      <td style="${cell}">${who(w)}
+        <span style="font-size:13px">שעות שמתאימות לה: <b>${times(t)}</b></span>
       </td>
     </tr>`).join('');
+
+  const nearRows = near.map(({ waiter: w, times: t, missing }, i) => `<tr>
+      <td style="${cell};white-space:nowrap;vertical-align:top">${i + 1}.</td>
+      <td style="${cell}">${who(w)}
+        <span style="font-size:13px;color:#b7791f"><b>חסרות ${missing} דק׳</b> כדי שהיא תוכל לקבוע את התור שביקשה
+          (הרווח הפנוי מתחיל ב-<b>${times(t)}</b> ואורכו ${w.duration_min - missing} דק׳).</span>
+      </td>
+    </tr>`).join('');
+
+  const fitBlock = fits.length ? `
+        <p>🎉 <b>יש תור פנוי שמתאים בדיוק</b> לתור שביקשו הלקוחות הבאות (לפי סדר הרשמה):</p>
+        ${table(fitRows)}` : '';
+  const nearBlock = near.length ? `
+        <p>⏳ <b>כמעט יש תור</b> — ללקוחות הבאות חסרות עד ${NEAR_MISS_MIN} דקות כדי לקבוע את התור שביקשו.
+           אם תפני את הדקות החסרות (למשל לסיים מעט מאוחר יותר או לקצר הפסקה), הן יוכלו לקבוע:</p>
+        ${table(nearRows)}` : '';
+
+  const heading = fits.length ? `🔔 התפנה תור ביום שישי ${dmy(dateStr)}`
+                              : `⏳ כמעט התפנה תור ביום שישי ${dmy(dateStr)}`;
 
   const adminLink = `${siteBaseUrl}/admin.html?waitlist=1`;
 
@@ -84,14 +121,12 @@ function buildEmail(dateStr, matches, siteBaseUrl) {
     <div dir="rtl" style="font-family:Arial,Helvetica,sans-serif;max-width:540px;margin:0 auto;
                           background:#fff;border:1px solid #f3d7e3;border-radius:14px;overflow:hidden">
       <div style="background:#e78aa8;color:#fff;padding:18px 22px;font-size:18px;font-weight:bold">
-        🔔 התפנה תור ביום שישי ${dmy(dateStr)}
+        ${heading}
       </div>
       <div style="padding:22px;color:#333;font-size:15px;line-height:1.7">
-        <p>שלום מוריה,<br>התפנה תור ביום שישי, ${dmy(dateStr)}.</p>
-        <p>יש עכשיו מספיק זמן לתור שביקשו הלקוחות הבאות ברשימת ההמתנה (לפי סדר הרשמה):</p>
-        <table style="width:100%;border-collapse:collapse;margin:14px 0;font-size:14px">
-          <tbody>${rows}</tbody>
-        </table>
+        <p>שלום מוריה,<br>יש עדכון לגבי רשימת ההמתנה ליום שישי, ${dmy(dateStr)}.</p>
+        ${fitBlock}
+        ${nearBlock}
         <p style="margin:18px 0 6px">היכנסי לדשבורד כדי להודיע להן:</p>
         <a href="${adminLink}" style="display:inline-block;margin-top:10px;background:#e78aa8;color:#fff;
                   text-decoration:none;padding:11px 22px;border-radius:9px;font-weight:bold">לרשימת ההמתנה</a>
@@ -99,7 +134,9 @@ function buildEmail(dateStr, matches, siteBaseUrl) {
     </div>`;
 
   return {
-    subject: `🔔 התפנה תור ביום שישי ${dmy(dateStr)} — יש ממתינות ברשימה`,
+    subject: fits.length
+      ? `🔔 התפנה תור ביום שישי ${dmy(dateStr)} — יש ממתינות ברשימה`
+      : `⏳ כמעט התפנה תור ביום שישי ${dmy(dateStr)} — חסרות דקות ספורות`,
     html
   };
 }
@@ -151,22 +188,36 @@ async function runWaitlistNotify({ date, apiBaseUrl, siteBaseUrl }) {
     ]);
     if (!busy) return ok; // couldn't read the calendar — safer to skip than to guess
 
-    // Only a waiter whose own treatment fits is news; the rest stay
-    // un-notified until a later change makes room for them too. Rows from
-    // before duration_min was recorded are skipped: all that's known is the
-    // day was full for *something* she picked, so no opening can be matched
-    // to her — Moriya sees her on the dashboard list instead.
-    const day = MoriyaSchedule.readRows(rows);
-    const matches = waiters
-      .filter(w => Number(w.duration_min) > 0)
-      .map(w => ({ waiter: w,
-                   times: MoriyaSchedule.availableStarts(Number(w.duration_min), date, day, busy) }))
-      .filter(m => m.times.length);
-    if (!matches.length) return ok;
+    // Each waiter is measured against her own treatment:
+    //  - it fits → emailed once, stamped notified_at, and she's done;
+    //  - it's at most NEAR_MISS_MIN short → emailed once as an almost-fit,
+    //    stamped near_notified_at, and still eligible for a real fit later;
+    //  - otherwise she stays as she is until a later change makes room.
+    // Rows from before duration_min was recorded are skipped: all that's
+    // known is the day was full for *something* she picked, so no opening can
+    // be matched to her — Moriya sees her on the dashboard list instead.
+    const day  = MoriyaSchedule.readRows(rows);
+    const fits = [], near = [];
+    waiters.forEach(w => {
+      const need = Number(w.duration_min);
+      if (!need) return;
+      const t = MoriyaSchedule.availableStarts(need, date, day, busy);
+      if (t.length) { fits.push({ waiter: w, times: t }); return; }
+      if (w.near_notified_at) return;
+      const best = MoriyaSchedule.longestFit(need, Math.min(BASE_MIN, need), date, day, busy);
+      if (best && need - best <= NEAR_MISS_MIN) {
+        near.push({ waiter: w, missing: need - best,
+                    times: MoriyaSchedule.availableStarts(best, date, day, busy) });
+      }
+    });
+    if (!fits.length && !near.length) return ok;
 
-    const { subject, html } = buildEmail(date, matches, siteBaseUrl);
+    const { subject, html } = buildEmail(date, fits, near, siteBaseUrl);
     const sent = await sendEmail(mail, subject, html);
-    if (sent) await markNotified(env, matches.map(m => m.waiter.id));
+    if (sent) {
+      await markNotified(env, fits.map(m => m.waiter.id), 'notified_at');
+      await markNotified(env, near.map(m => m.waiter.id), 'near_notified_at');
+    }
 
     return ok;
   } catch (err) {
