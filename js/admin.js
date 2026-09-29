@@ -126,13 +126,16 @@ const cancelledAppts = new Set();
 const rejectedAppts  = new Set();
 
 function moveText(appt) {
+  const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
   const time = (appt.start_time || '').slice(0, 5);
-  return `${appt.client_name} אהובה, הזזתי את התור שלך ל-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
+  // *…* renders as bold in WhatsApp.
+  return `${appt.client_name} אהובה, הזזתי את התור שלך ל*${svc}* ל-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
 }
 
 function cancelNoticeText(appt) {
+  const svc = (appt.services || []).map(s => s.name).join(' · ') || "מניקור לק ג'ל";
   const time = (appt.start_time || '').slice(0, 5);
-  return `${appt.client_name} אהובה, ביטלתי את התור שלך ב-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
+  return `${appt.client_name} אהובה, ביטלתי את התור שלך ל*${svc}* ב-${fmtDate(appt.date)} בשעה ${time} ${EMO.heart}`;
 }
 
 // A request Moriya declined, or one that lost the auto-reject race to a
