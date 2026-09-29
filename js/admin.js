@@ -2801,6 +2801,7 @@ let reschedTarget = null;
 let reschedSelDate = null;
 let reschedSelTime = null;
 let reschedDay = {};           // the shown day, as read by the schedule model
+let reschedShut = false;       // the shown day has no working hours (yet)
 let reschedCalYear = new Date().getFullYear();
 let reschedCalMonth = new Date().getMonth();
 
@@ -2869,12 +2870,15 @@ async function renderReschedCalendar() {
     const isPast  = d < today;
     const info    = states.get(dateStr);
     const isOpen  = !isPast && effectiveOpen(dateStr, info).length > 0;
+    // Any day ahead can take the appointment: one without working hours is
+    // opened for exactly the appointment's hours when the move is saved.
     let cls = 'cal-day';
     if (isPast) cls += ' past';
-    if (info && info.closed) cls += ' is-closed';
     else if (isOpen) cls += ' has-windows friday-avail';
+    else cls += ' resched-shut';
+    if (info && info.closed) cls += ' is-closed';
     if (dateStr === reschedSelDate) cls += ' selected';
-    html += `<div class="${cls}" ${isOpen ? `data-date="${dateStr}"` : ''}>${day}</div>`;
+    html += `<div class="${cls}" ${isPast ? '' : `data-date="${dateStr}"`}>${day}</div>`;
   }
   html += '</div>';
   box.innerHTML = html;
@@ -2904,7 +2908,8 @@ function selectReschedDate(dateStr) {
 function reschedConflict(dateStr, day, start) {
   const end  = start + (Number(reschedTarget.duration_min) || 0);
   const wins = MoriyaSchedule.openWindows(dateStr, day);
-  if (!wins.some(w => start >= w.start && end <= w.end)) return 'מחוץ לשעות העבודה';
+  // A day with no hours at all is opened around the appointment on save.
+  if (wins.length && !wins.some(w => start >= w.start && end <= w.end)) return 'מחוץ לשעות העבודה';
 
   // Another client would have to move for this one. A rejected urgent request
   // never held the slot, same as cancelled.
@@ -2960,6 +2965,18 @@ async function loadReschedSlots(dateStr) {
   refreshReschedSave();
 
   const starts = await reschedFreeStarts(dateStr);
+  reschedShut  = !MoriyaSchedule.openWindows(dateStr, reschedDay).length;
+
+  // No working hours that day: there is no grid to offer, only the hour she
+  // picks — the appointment's current hour to begin with, the usual case.
+  if (reschedShut) {
+    if (!reschedSelTime) reschedSelTime = (reschedTarget.start_time || '09:00').slice(0, 5);
+    setTimeSelect('resched', toMin(reschedSelTime));
+    grid.innerHTML = '<div class="no-slots">היום הזה לא פתוח לעבודה.<br/>בחרי שעה למטה — בשמירה הוא ייפתח רק לשעות התור.</div>';
+    pickManualReschedTime();
+    return;
+  }
+
   setTimeSelect('resched', reschedSelTime ? toMin(reschedSelTime) : (starts[0] ?? 9 * 60));
   document.getElementById('resched-manual-note').textContent = '';
 
@@ -2998,6 +3015,9 @@ function pickManualReschedTime() {
   if (why) {
     note.innerHTML = `⚠ <span dir="ltr">${time}–${end}</span> ${why}. אפשר לשמור בכל זאת.`;
     note.className = 'mt-note warn';
+  } else if (reschedShut) {
+    note.innerHTML = `🔓 <span dir="ltr">${time}–${end}</span> · היום ייפתח לשעות האלה בלבד`;
+    note.className = 'mt-note ok';
   } else {
     note.innerHTML = `✓ <span dir="ltr">${time}–${end}</span> פנוי`;
     note.className = 'mt-note ok';
@@ -3060,6 +3080,19 @@ async function saveReschedule() {
   if (error) { fb.textContent = 'העדכון נכשל: ' + error.message; fb.className = 'avail-feedback err'; return; }
   reschedTarget.date = date; reschedTarget.start_time = time;
 
+  // A day that wasn't open is opened now — for the appointment's hours only, so
+  // it takes this client and offers nothing else. Done after the move, never
+  // before: a day opened for a move that then failed would sit open for booking.
+  let openOk = true;
+  if (reschedShut) {
+    const endTime = fromMin(toMin(time) + (Number(reschedTarget.duration_min) || 0));
+    const { error: clErr } = await MoriyaAuth.sb.from('availability')
+      .delete().eq('date', date).eq('kind', 'closed');
+    const { error: opErr } = clErr ? { error: clErr } : await MoriyaAuth.sb.from('availability')
+      .insert({ date, start_time: time, end_time: endTime, kind: 'open' });
+    openOk = !opErr;
+  }
+
   // The vacated old date may have opened a slot someone's waiting for.
   if (oldDate !== date) {
     fetch(`${API_BASE}/api/waitlist-notify`, {
@@ -3069,6 +3102,7 @@ async function saveReschedule() {
   }
 
   if (!calOk) alert('התור עודכן במערכת, אך ייתכן שלא עודכן ביומן Google — כדאי לבדוק ידנית.');
+  if (!openOk) alert('התור הוזז, אך היום לא נפתח לשעות התור — אפשר לפתוח אותו ידנית מלוח הזמנים.');
   movedAppts.add(String(reschedTarget.id));
   showReschedDone(reschedTarget);
   renderKPIs(); renderCharts(); renderAppointments(); refreshDayView(); renderWaitlist();

@@ -269,6 +269,13 @@
 .resched-picker { display: flex; flex-direction: column; gap: 18px; margin-bottom: 8px; }
 .resched-picker .calendar-box { width: 100%; }
 .resched-picker .slots-box { margin-top: 0; }
+/* A day with no working hours: still a valid target — the move opens it. */
+#resched-cal-box .cal-day.resched-shut {
+  cursor: pointer;
+  border: 1.5px dashed var(--gray-100);
+}
+#resched-cal-box .cal-day.resched-shut:hover { background: var(--pink-50); border-color: var(--pink-200); }
+#resched-cal-box .cal-day.is-closed { text-decoration: line-through; }
 
 /* Any other hour, typed in by hand — allowed anywhere, warned about when it
    isn't one of the day's free slots. */
