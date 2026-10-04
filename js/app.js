@@ -1744,7 +1744,7 @@ function buildGoogleCalendarUrl(treatments, durationMinutes, priceText) {
     text:     `תור אצל מוריה – ${list}`,
     dates:    `${fmt(start)}/${fmt(end)}`,
     details:  `הטיפול: ${list}\nמחיר: ${priceText}`,
-    location: 'יעקב בר סימנטוב 18',
+    location: 'יעקב בר סימנטוב 18 יהוד',
     ctz:      'Asia/Jerusalem'
   });
   return `https://calendar.google.com/calendar/render?${params.toString()}`;

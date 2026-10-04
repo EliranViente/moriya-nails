@@ -43,8 +43,9 @@ const STATUS_HE = {
 
 // ─── WhatsApp reminders ───────────────────────────────────────────────────────
 // Venue details echoed inside the reminder message.
-const VENUE_ADDR = 'יעקב בר סימנטוב 18';
-const VENUE_MAPS = 'https://www.google.com/maps/search/?api=1&query=%D7%99%D7%A2%D7%A7%D7%91%20%D7%91%D7%A8%20%D7%A1%D7%99%D7%9E%D7%A0%D7%98%D7%95%D7%91%2018';
+// The studio's own address; VENUE_MAPS points to where to park.
+const STUDIO_ADDR = 'גורדון 3 יהוד';
+const VENUE_MAPS = 'https://www.google.com/maps/search/?api=1&query=%D7%99%D7%A2%D7%A7%D7%91%20%D7%91%D7%A8%20%D7%A1%D7%99%D7%9E%D7%A0%D7%98%D7%95%D7%91%2018%20%D7%99%D7%94%D7%95%D7%93';
 
 // Normalize an Israeli phone (e.g. "050-123 4567") to WhatsApp's intl form "9725…".
 function waPhone(raw) {
@@ -93,7 +94,7 @@ function reminderText(appt) {
     `${EMO.hourglass} משך משוער: ${appt.duration_min} דק׳`,
     `${EMO.money} לתשלום: ${ils(Number(appt.total_price || 0))}`,
     ``,
-    `${EMO.pin} ${VENUE_ADDR}`,
+    `${EMO.pin} כתובת: ${STUDIO_ADDR}`,
     `${EMO.parking} הגעה וחניה: ${VENUE_MAPS}`,
     ``,
     `${EMO.star} רוצה להשאיר חוות דעת על הטיפול שקיבלת? כרגע אפשר: ${REVIEW_LINK}`,
@@ -161,7 +162,7 @@ function approvedText(appt) {
     `${EMO.hourglass} משך משוער: ${appt.duration_min} דק׳`,
     `${EMO.money} לתשלום: ${ils(Number(appt.total_price || 0))}`,
     ``,
-    `${EMO.pin} ${VENUE_ADDR}`,
+    `${EMO.pin} כתובת: ${STUDIO_ADDR}`,
     `${EMO.parking} הגעה וחניה: ${VENUE_MAPS}`,
     ``,
     `מחכה לראות אותך ${EMO.sparkH}`,
