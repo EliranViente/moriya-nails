@@ -7,6 +7,34 @@ const SUPABASE_URL      = 'https://yspzwxyxhdjtpcqaebls.supabase.co';
 const SUPABASE_ANON_KEY = 'sb_publishable_C77ymTC07RcpoMwmNDESRw_V_gY31OG';
 const ADMIN_EMAILS      = ['eliran.viente@gmail.com', 'moriya681@gmail.com'];
 
+// Supabase hands the session back by appending "#access_token=…" to the URL we
+// redirect to. If that URL already had a hash (tapping "הזמיני תור עכשיו" leaves
+// "#booking" on it), she comes back to "#booking#access_token=…", which the
+// client can't read — so she lands on the site still logged out, every time.
+// The section she was on is therefore kept here instead of in the URL, and put
+// back once she returns (see restoreResumeHash).
+const RESUME_HASH_KEY = 'moriya-auth-resume-hash';
+
+function rememberResumeHash(hash) {
+  try {
+    if (hash) sessionStorage.setItem(RESUME_HASH_KEY, hash);
+    else      sessionStorage.removeItem(RESUME_HASH_KEY);
+  } catch (_) { /* private mode: she just won't be scrolled back */ }
+}
+
+// A login started before this fix (or from a tab that was already open) can
+// still come back as "#booking#access_token=…". Split it before the Supabase
+// client reads the URL, so that login goes through too.
+(function rescueTokensBehindHash() {
+  const hash = window.location.hash;
+  const second = hash.indexOf('#', 1);
+  if (second === -1) return;
+  const tokens = hash.slice(second + 1);
+  if (!/(^|&)(access_token|error_description)=/.test(tokens)) return;
+  rememberResumeHash(hash.slice(0, second));
+  history.replaceState(history.state, '', window.location.pathname + window.location.search + '#' + tokens);
+})();
+
 const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
 const MoriyaAuth = {
@@ -45,12 +73,23 @@ const MoriyaAuth = {
   },
 
   async signIn() {
-    // Keeps the query/hash (e.g. the WhatsApp review link's ?review=1#reviews)
-    // through the Google redirect round-trip, so a flow started while logged
-    // out resumes where it left off instead of landing on a bare homepage.
+    // Keeps the query (e.g. the WhatsApp review link's ?review=1) through the
+    // Google redirect round-trip, so a flow started while logged out resumes
+    // where it left off. The hash must stay out of redirectTo — see
+    // RESUME_HASH_KEY — so it travels in sessionStorage instead.
+    rememberResumeHash(window.location.hash);
     const redirectTo = window.location.origin + window.location.pathname +
-      window.location.search + window.location.hash;
-    await sb.auth.signInWithOAuth({ provider: 'google', options: { redirectTo } });
+      window.location.search;
+    await sb.auth.signInWithOAuth({
+      provider: 'google',
+      options: {
+        redirectTo,
+        // Always show Google's account chooser, so a client with more than one
+        // Gmail picks the one she wants instead of being signed straight into
+        // whichever the phone used last.
+        queryParams: { prompt: 'select_account' },
+      },
+    });
   },
 
   async signOut() {
@@ -162,6 +201,21 @@ function renderAuthUI() {
   document.dispatchEvent(new CustomEvent('moriya-auth-changed'));
 }
 
+// Back from Google: put the section she was on ("#booking") back in the URL and
+// scroll to it. Runs once the client has read and cleared the tokens.
+function restoreResumeHash() {
+  let hash = null;
+  try {
+    hash = sessionStorage.getItem(RESUME_HASH_KEY);
+    sessionStorage.removeItem(RESUME_HASH_KEY);
+  } catch (_) { return; }
+  if (!hash || hash.length < 2) return;
+  history.replaceState(history.state, '', window.location.pathname + window.location.search + hash);
+  let target = null;
+  try { target = document.getElementById(decodeURIComponent(hash.slice(1))); } catch (_) {}
+  if (target) target.scrollIntoView();
+}
+
 async function initAuth() {
   try {
     const { data: { session } } = await sb.auth.getSession();
@@ -170,6 +224,7 @@ async function initAuth() {
   } catch (e) {
     console.warn('initAuth error:', e.message);
   }
+  restoreResumeHash();
   MoriyaAuth.ready = true;
   renderAuthUI();
 
