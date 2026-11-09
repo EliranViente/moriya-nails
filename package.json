@@ -4,6 +4,7 @@
   "description": "Moriya Nails website + Google Calendar booking (Netlify serverless functions)",
   "private": true,
   "dependencies": {
+    "google-auth-library": "^9.15.1",
     "googleapis": "^140.0.0"
   },
   "engines": {

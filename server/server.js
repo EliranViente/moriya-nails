@@ -12,6 +12,7 @@ const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
 const { deleteClient } = require('../shared/delete-client');
 const { getUserFromToken, isAdminUser } = require('../shared/admin-auth');
 const { runWaitlistNotify } = require('../shared/waitlist-notify');
+const { parseRangeQuery, busyByDate } = require('../shared/busy-range');
 
 const app = express();
 app.use(cors());
@@ -83,45 +84,25 @@ async function sendUrgentApprovalEmail({ clientName, clientPhone, services, date
 // ─── Health check ──────────────────────────────────────────────────────────────
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', calendar: CALENDAR_ID }));
 
-// ─── GET /api/busy-slots?date=YYYY-MM-DD ──────────────────────────────────────
-// Returns busy time intervals (in minutes since midnight) for a given Friday.
+// ─── GET /api/busy-slots?date=YYYY-MM-DD  |  ?from=YYYY-MM-DD&to=YYYY-MM-DD ───
+// Busy intervals (minutes since Israel midnight) for one day or a whole range,
+// grouped by day — parity with netlify/functions/busy-slots.js via shared/busy-range.
 app.get('/api/busy-slots', async (req, res) => {
-  const { date } = req.query;
-  if (!date || !/^\d{4}-\d{2}-\d{2}$/.test(date)) {
-    return res.status(400).json({ error: 'Missing or invalid date (YYYY-MM-DD)' });
-  }
+  const range = parseRangeQuery(req.query);
+  if (range.error) return res.status(400).json({ error: range.error });
 
   try {
-    const auth     = getAuth();
-    const calendar = google.calendar({ version: 'v3', auth });
-
-    // Query the whole UTC day so the Israel work-hours window is fully covered
-    // regardless of DST or which Friday band is in effect (parity with
-    // netlify/functions/busy-slots.js). Returned busy times are converted to
-    // Israel minutes below.
-    const timeMin  = `${date}T00:00:00Z`;
-    const dayAfter = new Date(`${date}T00:00:00Z`);
-    dayAfter.setUTCDate(dayAfter.getUTCDate() + 1);
-    const timeMax  = dayAfter.toISOString();
-
-    const fbRes = await calendar.freebusy.query({
-      requestBody: {
-        timeMin,
-        timeMax,
-        timeZone: TZ,
-        items:    [{ id: CALENDAR_ID }]
-      }
-    });
-
-    const busyRaw = fbRes.data.calendars?.[CALENDAR_ID]?.busy || [];
-
-    // Convert to {start, end} in minutes since midnight (Jerusalem time)
-    const busySlots = busyRaw.map(b => ({
-      start: toMinutes(b.start, TZ),
-      end:   toMinutes(b.end,   TZ)
-    }));
-
-    res.json({ busySlots });
+    const calendar = google.calendar({ version: 'v3', auth: getAuth() });
+    const queryFreebusy = async (timeMin, timeMax) => {
+      const fbRes = await calendar.freebusy.query({
+        requestBody: { timeMin, timeMax, timeZone: TZ, items: [{ id: CALENDAR_ID }] }
+      });
+      const cal = fbRes.data.calendars?.[CALENDAR_ID];
+      if (cal?.errors?.length) throw new Error(`freeBusy: ${cal.errors[0].reason}`);
+      return cal?.busy || [];
+    };
+    const byDate = await busyByDate(range.from, range.to, queryFreebusy);
+    res.json(range.single ? { busySlots: byDate[range.from] } : { from: range.from, to: range.to, byDate });
   } catch (err) {
     console.error('busy-slots error:', err.message);
     res.status(500).json({ error: 'Failed to fetch calendar data', detail: err.message });
@@ -268,19 +249,6 @@ app.post('/api/manage-booking', async (req, res) => {
     res.status(500).json({ error: 'calendar_sync_failed', detail: err.message });
   }
 });
-
-// ─── Helpers ──────────────────────────────────────────────────────────────────
-function toMinutes(isoString, tz) {
-  // Convert ISO datetime to minutes since midnight in the given timezone
-  const d = new Date(isoString);
-  const local = new Intl.DateTimeFormat('en-US', {
-    timeZone: tz,
-    hour: 'numeric', minute: 'numeric', hour12: false
-  }).formatToParts(d);
-  const h = parseInt(local.find(p => p.type === 'hour').value);
-  const m = parseInt(local.find(p => p.type === 'minute').value);
-  return h * 60 + m;
-}
 
 // ─── POST /api/delete-client ──────────────────────────────────────────────────
 // Removes a client (parity with the Netlify function – same shared implementation).
