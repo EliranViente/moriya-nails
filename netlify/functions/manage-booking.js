@@ -16,6 +16,7 @@
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
 const { getUserFromToken, isAdminUser } = require('../../shared/admin-auth');
+const { toLocal, findConflict } = require('../../shared/busy-range');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
@@ -278,9 +279,11 @@ exports.handler = async (event) => {
 
   // Defense in depth: when Supabase is configured, verify the caller is either
   // the appointment owner or an admin managing it from the dashboard.
+  let callerIsAdmin = false;
   if (sbReady) {
     const user = await getUserFromToken(SB_ENV, accessToken);
-    const allowed = user && (isAdminUser(user) || await userOwnsEvent(user.id, eventId));
+    callerIsAdmin = isAdminUser(user);
+    const allowed = user && (callerIsAdmin || await userOwnsEvent(user.id, eventId));
     if (!allowed) {
       return { statusCode: 403, headers, body: JSON.stringify({ error: 'not_authorized' }) };
     }
@@ -313,6 +316,41 @@ exports.handler = async (event) => {
       const pad       = n => String(n).padStart(2, '0');
       const startLocal = `${date}T${time.length === 5 ? time : time.slice(0, 5)}:00`;
       const endLocal   = `${date}T${pad(Math.floor(endTotal / 60))}:${pad(endTotal % 60)}:00`;
+
+      // A client moving her appointment: make sure the new time is still free,
+      // the same way /api/book does for a new booking. Her own appointment's
+      // current slot doesn't count against her (she may keep or extend it).
+      // Moriya is never stopped — she may move an appointment anywhere. If the
+      // check itself fails, the move goes ahead as before.
+      if (!callerIsAdmin && dur > 0) {
+        let conflict = null;
+        try {
+          const cur = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
+          const curStart = cur.data.start && cur.data.start.dateTime;
+          const curEnd   = cur.data.end   && cur.data.end.dateTime;
+          let ignore = null;
+          if (curStart && curEnd) {
+            const s = toLocal(curStart), e = toLocal(curEnd);
+            if (s.date === e.date) ignore = { date: s.date, start: s.min, end: e.min };
+          }
+          conflict = await findConflict({
+            date, startMin, endMin: endTotal, ignore,
+            queryFreebusy: async (timeMin, timeMax) => {
+              const fb = await calendar.freebusy.query({
+                requestBody: { timeMin, timeMax, timeZone: TZ, items: [{ id: CALENDAR_ID }] }
+              });
+              const cal = fb.data.calendars && fb.data.calendars[CALENDAR_ID];
+              if (cal && cal.errors && cal.errors.length) throw new Error(`freeBusy: ${cal.errors[0].reason}`);
+              return (cal && cal.busy) || [];
+            }
+          });
+        } catch (err) {
+          console.warn('update: conflict check failed, moving anyway:', err.message);
+        }
+        if (conflict) {
+          return { statusCode: 409, headers, body: JSON.stringify({ error: 'slot_taken' }) };
+        }
+      }
 
       const patchBody = { start: { dateTime: startLocal, timeZone: TZ } };
       if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };

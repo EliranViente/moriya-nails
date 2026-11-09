@@ -2738,15 +2738,33 @@ async function adminApprove(id) {
 
   const accessToken = await getAccessToken();
   let eventId = null;
+  // /api/book refuses a time something else on the calendar already overlaps
+  // (409). That's her call to make, not a hard stop: she's warned, and only if
+  // she confirms is the request resent with `force`, which the server honours
+  // for an admin token alone.
+  const send = force => fetch(`${API_BASE}/api/book`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      date: appt.date, time: appt.start_time.slice(0, 5), duration: appt.duration_min,
+      clientName: appt.client_name, clientPhone: appt.client_phone, notes: appt.notes,
+      services: appt.services, totalPrice: appt.total_price, userId: appt.user_id, accessToken,
+      ...(force ? { force: true } : {}),
+    }),
+  });
   try {
-    const r = await fetch(`${API_BASE}/api/book`, {
-      method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        date: appt.date, time: appt.start_time.slice(0, 5), duration: appt.duration_min,
-        clientName: appt.client_name, clientPhone: appt.client_phone, notes: appt.notes,
-        services: appt.services, totalPrice: appt.total_price, userId: appt.user_id, accessToken,
-      }),
-    });
+    let r = await send(false);
+    if (r.status === 409) {
+      const goAhead = await confirmDialog({
+        icon:        '⚠️',
+        title:       'השעה כבר תפוסה ביומן',
+        message:     `ביומן כבר יש אירוע שחופף ל-${fmtDate(appt.date)} בשעה ${appt.start_time.slice(0, 5)}. לאשר את הבקשה בכל זאת?`,
+        confirmText: 'כן, אשרי בכל זאת',
+        cancelText:  'חזרה',
+        tone:        'danger',
+      });
+      if (!goAhead) return;
+      r = await send(true);
+    }
     if (r.ok) { const data = await r.json().catch(() => ({})); eventId = data.eventId || null; }
   } catch (e) { console.warn('urgent approve calendar create failed:', e.message); }
 

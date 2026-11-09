@@ -5,6 +5,7 @@
 const { google } = require('googleapis');
 const { serviceTitle, serviceDetailLines } = require('../../shared/calendar-text');
 const { getUserFromToken, isAdminUser } = require('../../shared/admin-auth');
+const { findConflict } = require('../../shared/busy-range');
 
 const CALENDAR_ID = process.env.CALENDAR_ID || '4rsiafj15ii8ae2p0m5i9e9be4@group.calendar.google.com';
 const TZ          = 'Asia/Jerusalem';
@@ -34,7 +35,7 @@ exports.handler = async (event) => {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Invalid JSON' }) };
   }
 
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, userId, accessToken } = body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, userId, accessToken, force } = body;
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return { statusCode: 400, headers, body: JSON.stringify({ error: 'Missing required fields' }) };
   }
@@ -71,6 +72,36 @@ exports.handler = async (event) => {
     const em        = String(endTotal % 60).padStart(2, '0');
     const startLocal = `${date}T${time}:00`;
     const endLocal   = `${date}T${eh}:${em}:00`;
+
+    // Last look at the calendar before writing to it: the client picked this
+    // time from slots loaded a while ago (she then filled in her details), and
+    // someone else may have taken it since. Same overlap rule as the slot
+    // picker, so a time that was genuinely free always passes. Only Moriya
+    // (admin token + force, after the dashboard warned her) may book over a
+    // clash. If the check itself fails, book as before rather than turn a
+    // client away over a hiccup.
+    let conflict = null;
+    try {
+      conflict = await findConflict({
+        date, startMin: sh * 60 + sm, endMin: endTotal,
+        queryFreebusy: async (timeMin, timeMax) => {
+          const fb = await calendar.freebusy.query({
+            requestBody: { timeMin, timeMax, timeZone: TZ, items: [{ id: CALENDAR_ID }] }
+          });
+          const cal = fb.data.calendars && fb.data.calendars[CALENDAR_ID];
+          if (cal && cal.errors && cal.errors.length) throw new Error(`freeBusy: ${cal.errors[0].reason}`);
+          return (cal && cal.busy) || [];
+        }
+      });
+    } catch (err) {
+      console.warn('book: conflict check failed, booking anyway:', err.message);
+    }
+    if (conflict) {
+      const caller = force ? await getUserFromToken(SB_ENV, accessToken) : null;
+      if (!isAdminUser(caller)) {
+        return { statusCode: 409, headers, body: JSON.stringify({ error: 'slot_taken' }) };
+      }
+    }
 
     const description  = [
       `👩 לקוחה: ${clientName}`,

@@ -104,4 +104,34 @@ async function busyByDate(from, to, queryFreebusy) {
   return byDate;
 }
 
-module.exports = { TZ, parseRangeQuery, busyByDate };
+/**
+ * The busy interval a booking of `startMin`..`endMin` on `date` (Israel wall
+ * clock) would overlap, or null when the time is still free. Same overlap rule
+ * as the slot picker (js/schedule.js availableStarts), so any time the site
+ * offered from a fresh read passes; it only trips when the calendar changed
+ * after the client loaded her slots — someone else took the time meanwhile.
+ * `ignore` ({date, start, end}) frees an appointment's own current slot when
+ * it is being moved, like carveOwnAppointment() does in the browser.
+ */
+async function findConflict({ date, startMin, endMin, queryFreebusy, ignore }) {
+  const byDate = await busyByDate(date, date, queryFreebusy);
+  let busy = byDate[date] || [];
+  if (ignore && ignore.date === date) {
+    const out = [];
+    busy.forEach(b => {
+      if (ignore.end <= b.start || ignore.start >= b.end) { out.push(b); return; }
+      if (ignore.start > b.start) out.push({ start: b.start, end: ignore.start });
+      if (ignore.end < b.end)     out.push({ start: ignore.end, end: b.end });
+    });
+    busy = out;
+  }
+  return busy.find(b => startMin < b.end && endMin > b.start) || null;
+}
+
+// "HH:MM" (or "HH:MM:SS") → minutes.
+function hhmmToMin(t) {
+  const [h, m] = String(t).split(':').map(Number);
+  return h * 60 + m;
+}
+
+module.exports = { TZ, toLocal, parseRangeQuery, busyByDate, findConflict, hhmmToMin };

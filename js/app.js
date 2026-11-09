@@ -1583,6 +1583,26 @@ function prefillUserDetails() {
   if (phoneEl && !phoneEl.value && phone) phoneEl.value = phone;
 }
 
+// The server refused a time because it was taken after her slots were loaded
+// (a new booking or a move). Back to the time step with that day re-read from
+// the calendar, so she only sees what is really free now; her treatments,
+// details and (when moving) the appointment being moved all stay as they were.
+async function handleSlotTaken() {
+  invalidateBusy(state.selectedDate);
+  state.selectedTime = null;
+  showStep(2);
+  renderCalendar();
+  loadTimeSlots(state.selectedDate);
+  await confirmDialog({
+    icon:        '⏰',
+    title:       'השעה נתפסה ממש עכשיו',
+    message:     'מישהי הספיקה לקבוע את השעה הזו לפני רגע. השעות הפנויות עודכנו — בחרי בבקשה שעה אחרת 💕',
+    confirmText: 'הבנתי',
+    cancelText:  'סגירה',
+    tone:        'default'
+  });
+}
+
 // Undo the calendar event created moments ago for a booking that then failed to
 // save. Best-effort: if it doesn't go through, the error screen has already sent
 // the client to Moriya, who can clear the leftover from her calendar.
@@ -1731,6 +1751,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   //    per leg, skipped entirely for an urgent request, whose event(s) are
   //    created only once approved.
   const googleEventIds = [];
+  let slotTaken = false;
   for (const leg of legs) {
     let eventId = null;
     if (!isUrgent) {
@@ -1750,6 +1771,9 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
             userId:      MoriyaAuth.user.id
           })
         });
+        // Someone else took this time after her slots were loaded — the server
+        // refused to double-book it. Stop here (see below).
+        if (res.status === 409) { slotTaken = true; break; }
         if (res.ok) {
           const data = await res.json().catch(() => ({}));
           eventId = data.eventId || null;
@@ -1759,6 +1783,17 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
       }
     }
     googleEventIds.push(eventId);
+  }
+
+  // Nothing is saved for a taken time: undo any leg already put on the
+  // calendar (hands, when it was the feet leg that clashed), then send her back
+  // to fresh slots with everything she chose and typed still in place.
+  if (slotTaken) {
+    await Promise.all(googleEventIds.map(rollbackCalendarEvent));
+    btn.disabled    = false;
+    btn.textContent = 'אשרי הזמנה ✓';
+    await handleSlotTaken();
+    return;
   }
 
   // 2) Save to Supabase (profile + one appointment row per leg). Booking is
@@ -2527,7 +2562,7 @@ async function updateAppointment() {
     // 1) Move the matching event on Google Calendar (and add the approval flag).
     if (editingAppointment.google_event_id) {
       const accessToken = await getAccessToken();
-      await fetch(`${API_BASE}/api/manage-booking`, {
+      const res = await fetch(`${API_BASE}/api/manage-booking`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -2549,6 +2584,13 @@ async function updateAppointment() {
           accessToken
         })
       });
+      // The new time was taken after her slots were loaded. Nothing moved on
+      // the calendar, so leave the database alone too and let her pick again.
+      if (res.status === 409) {
+        if (btn) { btn.textContent = 'עדכני תור ✓'; }
+        await handleSlotTaken();
+        return;
+      }
     }
     // 2) Persist the new time, treatment list, duration and price in Supabase,
     //    flagging the appointment as pending approval when required.

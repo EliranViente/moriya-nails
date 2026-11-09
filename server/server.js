@@ -12,7 +12,7 @@ const { serviceTitle, serviceDetailLines } = require('../shared/calendar-text');
 const { deleteClient } = require('../shared/delete-client');
 const { getUserFromToken, isAdminUser } = require('../shared/admin-auth');
 const { runWaitlistNotify } = require('../shared/waitlist-notify');
-const { parseRangeQuery, busyByDate } = require('../shared/busy-range');
+const { toLocal, parseRangeQuery, busyByDate, findConflict } = require('../shared/busy-range');
 
 const app = express();
 app.use(cors());
@@ -31,6 +31,18 @@ function getAuth() {
 
 const CALENDAR_ID = process.env.CALENDAR_ID || 'moriya681@gmail.com';
 const TZ          = 'Asia/Jerusalem';
+
+// Google freeBusy for the calendar, in the shape shared/busy-range expects.
+function freebusyQuery(calendar) {
+  return async (timeMin, timeMax) => {
+    const fbRes = await calendar.freebusy.query({
+      requestBody: { timeMin, timeMax, timeZone: TZ, items: [{ id: CALENDAR_ID }] }
+    });
+    const cal = fbRes.data.calendars?.[CALENDAR_ID];
+    if (cal?.errors?.length) throw new Error(`freeBusy: ${cal.errors[0].reason}`);
+    return cal?.busy || [];
+  };
+}
 
 const SB_ENV = { url: process.env.SUPABASE_URL || '', key: process.env.SUPABASE_SERVICE_ROLE_KEY || '' };
 const URGENT_WINDOW_MS = 48 * 60 * 60 * 1000;
@@ -93,15 +105,7 @@ app.get('/api/busy-slots', async (req, res) => {
 
   try {
     const calendar = google.calendar({ version: 'v3', auth: getAuth() });
-    const queryFreebusy = async (timeMin, timeMax) => {
-      const fbRes = await calendar.freebusy.query({
-        requestBody: { timeMin, timeMax, timeZone: TZ, items: [{ id: CALENDAR_ID }] }
-      });
-      const cal = fbRes.data.calendars?.[CALENDAR_ID];
-      if (cal?.errors?.length) throw new Error(`freeBusy: ${cal.errors[0].reason}`);
-      return cal?.busy || [];
-    };
-    const byDate = await busyByDate(range.from, range.to, queryFreebusy);
+    const byDate = await busyByDate(range.from, range.to, freebusyQuery(calendar));
     res.json(range.single ? { busySlots: byDate[range.from] } : { from: range.from, to: range.to, byDate });
   } catch (err) {
     console.error('busy-slots error:', err.message);
@@ -112,7 +116,7 @@ app.get('/api/busy-slots', async (req, res) => {
 // ─── POST /api/book ───────────────────────────────────────────────────────────
 // Creates a Google Calendar event for the appointment.
 app.post('/api/book', async (req, res) => {
-  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, accessToken } = req.body;
+  const { date, time, duration, clientName, clientPhone, services, totalPrice, notes, accessToken, force } = req.body;
 
   if (!date || !time || !duration || !clientName || !clientPhone) {
     return res.status(400).json({ error: 'Missing required fields' });
@@ -138,6 +142,21 @@ app.post('/api/book', async (req, res) => {
 
     const startDT = new Date(`${date}T${time}:00`);
     const endDT   = new Date(startDT.getTime() + duration * 60_000);
+
+    // Parity with netlify/functions/book.js: refuse a time taken since the
+    // client loaded her slots; only an admin with `force` may book over it.
+    let conflict = null;
+    try {
+      const [sh, sm] = time.split(':').map(Number);
+      conflict = await findConflict({
+        date, startMin: sh * 60 + sm, endMin: sh * 60 + sm + Number(duration),
+        queryFreebusy: freebusyQuery(calendar)
+      });
+    } catch (err) { console.warn('book: conflict check failed, booking anyway:', err.message); }
+    if (conflict) {
+      const caller = force ? await getUserFromToken(SB_ENV, accessToken) : null;
+      if (!isAdminUser(caller)) return res.status(409).json({ error: 'slot_taken' });
+    }
 
     const description  = [
       `👩 לקוחה: ${clientName}`,
@@ -172,7 +191,7 @@ app.post('/api/book', async (req, res) => {
 app.post('/api/manage-booking', async (req, res) => {
   const { action, eventId, date, time, duration,
           services, totalPrice, clientName, clientPhone, notes,
-          pendingApproval, addedMinutes } = req.body;
+          pendingApproval, addedMinutes, accessToken } = req.body;
   if (!action) {
     return res.status(400).json({ error: 'Missing action' });
   }
@@ -208,6 +227,27 @@ app.post('/api/manage-booking', async (req, res) => {
       const pad        = n => String(n).padStart(2, '0');
       const startLocal = `${date}T${time.length === 5 ? time : time.slice(0, 5)}:00`;
       const endLocal   = `${date}T${pad(Math.floor(endTotal / 60))}:${pad(endTotal % 60)}:00`;
+
+      // Parity with netlify/functions/manage-booking.js: a client's move must
+      // land on a free time (her own current slot excluded); Moriya is never
+      // stopped.
+      const caller = await getUserFromToken(SB_ENV, accessToken);
+      if (!isAdminUser(caller) && dur > 0) {
+        let conflict = null;
+        try {
+          const cur = await calendar.events.get({ calendarId: CALENDAR_ID, eventId });
+          const cs = cur.data.start?.dateTime, ce = cur.data.end?.dateTime;
+          let ignore = null;
+          if (cs && ce) {
+            const a = toLocal(cs), b = toLocal(ce);
+            if (a.date === b.date) ignore = { date: a.date, start: a.min, end: b.min };
+          }
+          conflict = await findConflict({
+            date, startMin: sh * 60 + sm, endMin: endTotal, ignore, queryFreebusy: freebusyQuery(calendar)
+          });
+        } catch (err) { console.warn('update: conflict check failed, moving anyway:', err.message); }
+        if (conflict) return res.status(409).json({ error: 'slot_taken' });
+      }
 
       const patchBody = { start: { dateTime: startLocal, timeZone: TZ } };
       if (dur > 0) patchBody.end = { dateTime: endLocal, timeZone: TZ };
