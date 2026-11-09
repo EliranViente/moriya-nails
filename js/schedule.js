@@ -32,7 +32,8 @@
   // (so it repeats every year without edits). Bands are keyed to Tel Aviv
   // candle-lighting time, sized so the day always ends >=1.5h before Shabbat:
   //   band 1 needs candle-lighting >= 18:45, band 2 >= 18:30, band 3 >= 17:00,
-  //   band 4 fits any candle-lighting down to the year's earliest (~16:15).
+  //   band 4 ends at 15:00 by Moriya's choice — on the year's earliest
+  //   candle-lightings (~16:15) that leaves ~1h15 rather than 1.5h.
   // The two edges next to Israel's DST switch (band2⇄band3 in spring, band3⇄
   // band4 in autumn) are padded a few days into the safer neighboring band,
   // because the DST date itself moves ~3 days year to year and the clock jump
@@ -61,9 +62,9 @@
     },
     { // Band 4 – heart of winter
       ranges: [[1017, 1231], [101, 212]],                         // Oct 17 – Feb 12 (wraps year end)
-      open: [{ start: 8 * 60 + 30, end: 14 * 60 + 45 }],           // 08:30–14:45
-      bigBreak:   { start: 10 * 60, end: 10 * 60 + 15 },          // 10:00–10:15 (rigid only, no room to extend)
-      floatBreak: null,                                            // no time left for a second break
+      open: [{ start: 9 * 60, end: 15 * 60 }],                     // 09:00–15:00
+      bigBreak:   null,                                            // no break: the day starts later instead
+      floatBreak: null,
     },
   ];
 
@@ -140,7 +141,7 @@
   }
 
   // The day's two special breaks. A row set for this date always wins; otherwise
-  // a default Friday gets its band's pair (band 4 has no float break) and any
+  // a default Friday gets its band's pair (band 4 has neither) and any
   // other day gets neither.
   function dayBreaks(dateStr, day) {
     const d     = day || {};
