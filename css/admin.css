@@ -1016,3 +1016,10 @@
   -webkit-tap-highlight-color: transparent;
 }
 .admin-btn.primary:active:not(:disabled) { transform: scale(0.98); }
+
+/* <picture> only picks the WebP (or the JPG/PNG fallback); neither it nor its
+   <source> may add a box of their own — in a flex row with a gap, a <source>
+   would otherwise count as an item — so every img keeps the exact layout it
+   had without it. */
+picture { display: contents; }
+picture > source { display: none; }

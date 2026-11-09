@@ -16,7 +16,12 @@
   <link rel="manifest" href="site.webmanifest" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&family=Playfair+Display:wght@500;600;700&family=Dancing+Script:wght@600;700&display=swap" rel="stylesheet" />
+  <!-- Warm up the connections the booking flow needs (Supabase library + its
+       API) while the page is still loading, instead of after the scripts at the
+       end of <body> start. -->
+  <link rel="preconnect" href="https://cdn.jsdelivr.net" />
+  <link rel="preconnect" href="https://yspzwxyxhdjtpcqaebls.supabase.co" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Heebo:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="css/style.css" />
 
   <!-- ──────────────── FRESH START FOR SIGNED-OUT VISITORS ──────────────── -->
@@ -189,7 +194,7 @@
   <nav id="navbar">
     <div class="nav-inner">
       <a href="#home" class="nav-logo" aria-label="Moriya Nails - דף הבית">
-        <img src="images/logo-mark.png" alt="Moriya Nails" class="nav-logo-img" />
+        <picture><source srcset="images/logo-mark.webp" type="image/webp" /><img src="images/logo-mark.png" alt="Moriya Nails" class="nav-logo-img" /></picture>
       </a>
       <div class="nav-cluster">
         <ul class="nav-links" id="nav-links">
@@ -883,7 +888,7 @@
       <article class="insta-post" id="insta-post">
         <header class="ip-top">
           <a class="ip-account" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener">
-            <span class="ip-avatar"><img src="images/logo-mark.png" alt="Moriya Nails" /></span>
+            <span class="ip-avatar"><picture><source srcset="images/logo-mark.webp" type="image/webp" /><img src="images/logo-mark.png" alt="Moriya Nails" /></picture></span>
             <span class="ip-names">
               <span class="ip-handle">moriya__nails</span>
               <span class="ip-place">Moriya Nails 💅</span>
@@ -894,16 +899,16 @@
 
         <div class="ip-frame" id="ip-frame">
           <div class="ip-track" id="ip-track">
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post0.jpg"  alt="לק ג'ל נוד עם קצה פרנץ' ורוד" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post1.jpg"  alt="לק ג'ל בגוון נוד טבעי" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post2.jpg"  alt="מניקור לבן שמנת בצורת שקד" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post3.jpg"  alt="פרנץ' לבן קלאסי" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post4.jpg"  alt="עיצוב לבן עם דוגמת גלים" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post5.jpg"  alt="לק ג'ל נוד ורוד עדין בצורת שקד" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post6.jpg"  alt="פרנץ' בגוון ורוד פוקסיה" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post7.jpg"  alt="מניקור טבעי בגוון נוד עדין" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post8.jpg"  alt="פרנץ' עם קישוט זהב עדין" loading="lazy" draggable="false" /></a>
-            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><img src="images/insta/post9.jpg"  alt="מניקור לבן עם גליטר כסף" loading="lazy" draggable="false" /></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post0.webp" type="image/webp" /><img src="images/insta/post0.jpg"  alt="לק ג'ל נוד עם קצה פרנץ' ורוד" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post1.webp" type="image/webp" /><img src="images/insta/post1.jpg"  alt="לק ג'ל בגוון נוד טבעי" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post2.webp" type="image/webp" /><img src="images/insta/post2.jpg"  alt="מניקור לבן שמנת בצורת שקד" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post3.webp" type="image/webp" /><img src="images/insta/post3.jpg"  alt="פרנץ' לבן קלאסי" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post4.webp" type="image/webp" /><img src="images/insta/post4.jpg"  alt="עיצוב לבן עם דוגמת גלים" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post5.webp" type="image/webp" /><img src="images/insta/post5.jpg"  alt="לק ג'ל נוד ורוד עדין בצורת שקד" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post6.webp" type="image/webp" /><img src="images/insta/post6.jpg"  alt="פרנץ' בגוון ורוד פוקסיה" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post7.webp" type="image/webp" /><img src="images/insta/post7.jpg"  alt="מניקור טבעי בגוון נוד עדין" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post8.webp" type="image/webp" /><img src="images/insta/post8.jpg"  alt="פרנץ' עם קישוט זהב עדין" loading="lazy" draggable="false" /></picture></a>
+            <a class="ip-slide" href="https://www.instagram.com/moriya__nails" target="_blank" rel="noopener" draggable="false"><picture><source srcset="images/insta/post9.webp" type="image/webp" /><img src="images/insta/post9.jpg"  alt="מניקור לבן עם גליטר כסף" loading="lazy" draggable="false" /></picture></a>
           </div>
           <button class="ip-nav ip-prev" id="ip-prev" type="button" aria-label="התמונה הקודמת">‹</button>
           <button class="ip-nav ip-next" id="ip-next" type="button" aria-label="התמונה הבאה">›</button>
@@ -1065,7 +1070,7 @@
     </div>
   </div>
 
-  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.119.0"></script>
   <script src="shared/calendar-text.js"></script>
   <script src="js/accessibility.js"></script>
   <script src="js/auth.js"></script>

@@ -46,6 +46,13 @@ body {
 }
 
 img { max-width: 100%; display: block; }
+/* <picture> only picks the WebP (or the JPG/PNG fallback); neither it nor its
+   <source> may add a box of their own — in a flex row with a gap, a <source>
+   would otherwise count as an item — so every img keeps the exact layout it
+   had without it. */
+picture { display: contents; }
+picture > source { display: none; }
+
 
 a { text-decoration: none; color: inherit; }
 
