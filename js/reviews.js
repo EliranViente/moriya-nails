@@ -138,17 +138,50 @@
     const apptsBtn = document.getElementById('appts-review-btn');
     if (cta) cta.style.display = eligible ? 'block' : 'none';
     if (apptsBtn) apptsBtn.textContent = label;
+
+    // The booking success card is only an invitation to write a first review,
+    // so it disappears as soon as she has one (e.g. right after submitting it).
+    const successCta = document.getElementById('success-review-cta');
+    if (successCta && myReview) successCta.style.display = 'none';
+  }
+
+  // Called by app.js when a new booking's success screen shows. Re-checks
+  // eligibility first, since the cached answer may be from before her last
+  // visit happened (the page can stay open for a long time).
+  async function offerAfterBooking() {
+    const box = document.getElementById('success-review-cta');
+    if (!box) return;
+    box.style.display = 'none';
+    await checkEligibility();
+    box.style.display = eligible && !myReview ? 'flex' : 'none';
   }
 
   // ─── Write / edit modal ────────────────────────────────────────────────────
   function renderStarsInput() {
     const box = document.getElementById('review-stars-input');
     if (!box) return;
+    // Redrawn on every click: start without a preview, so the new pick shows.
+    box.classList.remove('previewing');
     box.innerHTML = Array.from({ length: 5 }, (_, i) => {
       const n = i + 1;
       return `<button type="button" class="star-btn${n <= currentRating ? ' filled' : ''}" data-star="${n}" aria-label="${n} כוכבים">★</button>`;
     }).join('');
-    box.querySelectorAll('.star-btn').forEach(btn => {
+    // Hover preview: pointing at star N lights stars 1..N (and dims any
+    // already-picked stars above N); leaving the row restores the pick.
+    const btns = box.querySelectorAll('.star-btn');
+    const preview = n => {
+      box.classList.toggle('previewing', n > 0);
+      btns.forEach(b => b.classList.toggle('hover', Number(b.dataset.star) <= n));
+    };
+    if (!box.dataset.previewWired) {
+      box.dataset.previewWired = '1';
+      box.addEventListener('mouseleave', () => {
+        box.classList.remove('previewing');
+        box.querySelectorAll('.star-btn').forEach(b => b.classList.remove('hover'));
+      });
+    }
+    btns.forEach(btn => {
+      btn.addEventListener('mouseenter', () => preview(Number(btn.dataset.star)));
       btn.addEventListener('click', () => {
         currentRating = Number(btn.dataset.star);
         renderStarsInput();
@@ -243,6 +276,9 @@
   // ─── Wiring ────────────────────────────────────────────────────────────────
   document.getElementById('review-write-btn')?.addEventListener('click', openReviewModal);
   document.getElementById('appts-review-btn')?.addEventListener('click', openReviewModal);
+  document.getElementById('success-review-btn')?.addEventListener('click', openReviewModal);
+
+  window.MoriyaReviews = { offerAfterBooking };
   document.getElementById('review-close')?.addEventListener('click', closeReviewModal);
   document.getElementById('review-modal')?.addEventListener('click', e => {
     if (e.target.id === 'review-modal') closeReviewModal();

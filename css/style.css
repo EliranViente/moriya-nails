@@ -1263,6 +1263,19 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   background: var(--pink-50);
   border-color: var(--pink-200);
 }
+/* A work day whose room is still being checked — a soft shimmer instead of an
+   empty calendar. Not clickable until it resolves to available or full. */
+.cal-day.loading {
+  color: var(--gray-400);
+  border: 1.5px solid var(--gray-50);
+  background: linear-gradient(90deg, var(--gray-50) 0%, var(--pink-50) 50%, var(--gray-50) 100%);
+  background-size: 200% 100%;
+  animation: calDayShimmer 1.2s ease-in-out infinite;
+}
+@keyframes calDayShimmer {
+  from { background-position: 100% 0; }
+  to   { background-position: -100% 0; }
+}
 .cal-day.selected {
   background: linear-gradient(135deg, var(--pink-400), var(--pink-500)) !important;
   color: var(--white) !important;
@@ -1652,6 +1665,24 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   text-align: right;
 }
 .success-time-note-icon { font-size: 1.05rem; line-height: 1.4; flex-shrink: 0; }
+
+/* Review invitation on the success screen (returning clients, no review yet). */
+.success-review-cta {
+  width: 100%;
+  max-width: 440px;
+  margin: 12px auto 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 6px;
+  padding: 16px 18px;
+  background: var(--white);
+  border: 1.5px dashed var(--pink-300);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+.success-review-title { font-weight: 700; font-size: 1rem; color: var(--pink-500); }
+.success-review-text  { font-size: 0.85rem; line-height: 1.5; color: var(--gray-700); }
+.success-review-cta .review-write-btn { margin-top: 6px; padding: 10px 22px; font-size: 0.88rem; }
 
 /* Same note shown in the time-selection step, under the slots. */
 .time-shift-note {
@@ -2163,8 +2194,26 @@ label.rx-row { cursor: pointer; }
   cursor: pointer;
   transition: color var(--transition), transform var(--transition);
 }
-.star-btn:hover, .star-btn.hover { color: var(--gold); transform: scale(1.1); }
-.star-btn.filled { color: var(--gold); }
+.star-btn:hover { transform: scale(1.1); }
+.star-btn.filled, .star-btn.hover { color: var(--gold); }
+/* While previewing a rating, only the previewed stars are lit. */
+.review-stars-input.previewing .star-btn:not(.hover) { color: var(--pink-100); }
+/* Touch screens have no hover preview, so mark the scale's two ends instead. */
+@media (hover: none) {
+  .review-stars-input { padding-bottom: 16px; }
+  .star-btn { position: relative; }
+  .star-btn[data-star="1"]::after,
+  .star-btn[data-star="5"]::after {
+    content: attr(data-star);
+    position: absolute;
+    top: 100%;
+    left: 50%;
+    transform: translateX(-50%);
+    font-size: 0.75rem;
+    font-weight: 600;
+    color: var(--gray-400);
+  }
+}
 
 /* Toolbar: "text only" filter switch + the write-review entry point */
 .reviews-toolbar {

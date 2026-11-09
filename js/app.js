@@ -1008,29 +1008,130 @@ async function getDayWindows(dateStr) {
   return byDate.get(dateStr) || {};
 }
 
-// Busy intervals for a day, cached briefly so the calendar's per-day room
-// check and the slot picker (opened moments later, for the same date) don't
-// both hit the backend. Short TTL, not session-long: this is purely to kill
-// that one back-to-back re-fetch, not to serve minutes-old availability.
-const busySlotsCache = new Map(); // dateStr → { ts, busy }
+// Busy intervals per day, read from Google through /api/busy-slots. Two
+// freshness rules, on purpose:
+//   • What a client actually picks from — the time slots of a day — only ever
+//     uses a read younger than BUSY_CACHE_TTL_MS (getBusySlots); anything older
+//     is re-asked from Google, exactly as before.
+//   • The month grid's available/full colouring may show an older read at once
+//     and repaint moments later from a fresh one (renderCalendar). Clicking a
+//     day always goes through the strict path above, so an old colour can never
+//     turn into an old time slot.
+// The whole booking window (~2 months) comes back in one request, so the
+// calendar, the next month and "nearest slot" don't each wait on their own
+// round trip per Friday.
+const busySlotsCache   = new Map(); // dateStr → { ts, busy }
+const busyInvalidated  = new Map(); // dateStr → when it was invalidated
+const busyInflight     = [];        // [{ from, to, promise }]
 const BUSY_CACHE_TTL_MS = 20000;
-async function getBusySlots(dateStr) {
-  const cached = busySlotsCache.get(dateStr);
-  if (cached && (Date.now() - cached.ts) < BUSY_CACHE_TTL_MS) return cached.busy;
-  try {
-    const res  = await fetch(`${API_BASE}/api/busy-slots?date=${dateStr}`);
-    const data = await res.json();
-    const busy = data.busySlots || [];
-    busySlotsCache.set(dateStr, { ts: Date.now(), busy });
-    return busy;
-  } catch (e) {
-    // Backend unreachable — don't cache the failure (so the next read
-    // retries instead of treating the day as free for the rest of the
-    // session). Fall back to the last known value if we have one, else
-    // treat as free (safe default – the day stays available).
-    return cached ? cached.busy : [];
-  }
+
+function isBusyFresh(dateStr) {
+  const c = busySlotsCache.get(dateStr);
+  return !!c && (Date.now() - c.ts) < BUSY_CACHE_TTL_MS;
 }
+
+// After a booking/cancel/move changes a day: drop its read, and make sure a
+// request that was already in flight can't write the pre-change answer back.
+function invalidateBusy(dateStr) {
+  if (!dateStr) return;
+  busySlotsCache.delete(dateStr);
+  busyInvalidated.set(dateStr, Date.now());
+}
+
+// One request for from..to (inclusive). Concurrent asks for dates an in-flight
+// request already covers share it. Resolves true on success, false on failure
+// (failures aren't cached, so the next read retries).
+function fetchBusyRange(from, to) {
+  const hit = busyInflight.find(r => r.from <= from && r.to >= to);
+  if (hit) return hit.promise;
+
+  const entry = { from, to, promise: null };
+  busyInflight.push(entry);
+  const startedAt = Date.now();
+  entry.promise = (async () => {
+    try {
+      const res = await fetch(`${API_BASE}/api/busy-slots?from=${from}&to=${to}`);
+      if (!res.ok) throw new Error(`busy-slots ${res.status}`);
+      const data = await res.json();
+      const ts = Date.now();
+      Object.entries(data.byDate || {}).forEach(([d, busy]) => {
+        if ((busyInvalidated.get(d) || 0) >= startedAt) return; // changed meanwhile
+        busySlotsCache.set(d, { ts, busy: busy || [] });
+      });
+      return true;
+    } catch (e) {
+      return false;
+    }
+  })().finally(() => {
+    const i = busyInflight.indexOf(entry);
+    if (i >= 0) busyInflight.splice(i, 1);
+  });
+  return entry.promise;
+}
+
+// Strict read for one day (see the rules above).
+async function getBusySlots(dateStr) {
+  if (isBusyFresh(dateStr)) return busySlotsCache.get(dateStr).busy;
+  const pending = busyInflight.find(r => r.from <= dateStr && r.to >= dateStr);
+  if (pending) await pending.promise;
+  if (!isBusyFresh(dateStr)) await fetchBusyRange(dateStr, dateStr);
+  // Backend unreachable → the last known value if we have one, else free
+  // (safe default – the day stays available), as before.
+  const c = busySlotsCache.get(dateStr);
+  return c ? c.busy : [];
+}
+
+// Today .. the last bookable date.
+function bookingWindow() {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  return { from: MoriyaBooking.toDateStr(today), to: MoriyaBooking.horizonStr() };
+}
+
+// Fetch the whole window's busy times unless every day in it is still fresh.
+async function refreshBookingWindow() {
+  const { from, to } = bookingWindow();
+  for (const d = new Date(`${from}T00:00:00`); MoriyaBooking.toDateStr(d) <= to; d.setDate(d.getDate() + 1)) {
+    if (!isBusyFresh(MoriyaBooking.toDateStr(d))) return fetchBusyRange(from, to);
+  }
+  return true;
+}
+
+// Admin-set hours for every month the window touches, in parallel.
+function loadWindowAvailability() {
+  const { from, to } = bookingWindow();
+  const [fy, fm] = from.split('-').map(Number);
+  const [ty, tm] = to.split('-').map(Number);
+  const loads = [];
+  let y = fy, m = fm - 1;
+  while (y < ty || (y === ty && m <= tm - 1)) {
+    loads.push(getMonthAvailability(y, m));
+    if (++m > 11) { m = 0; y++; }
+  }
+  return Promise.all(loads);
+}
+
+// Start loading the calendar's data before she gets there — once she's signed
+// in and the booking card is on screen, or as she heads for the calendar.
+// Nothing is shown from it until the calendar is drawn, under the rules above.
+function prefetchBooking() {
+  if (!canBook()) return;
+  loadWindowAvailability();
+  refreshBookingWindow();
+}
+(function wirePrefetch() {
+  const card = document.getElementById('booking-card');
+  let cardVisible = false;
+  if (card && 'IntersectionObserver' in window) {
+    new IntersectionObserver(entries => {
+      cardVisible = entries.some(e => e.isIntersecting);
+      if (cardVisible) prefetchBooking();
+    }, { rootMargin: '200px' }).observe(card);
+  }
+  // Signed in while the card is already on screen.
+  document.addEventListener('moriya-auth-changed', () => { if (cardVisible) prefetchBooking(); });
+  const go = document.getElementById('go-step2');
+  ['pointerdown', 'focus'].forEach(ev => go?.addEventListener(ev, prefetchBooking));
+})();
 
 // Remove [s,e) from a list of busy intervals, splitting any interval it cuts
 // through. Used so an appointment's own slot doesn't count as busy against
@@ -1054,15 +1155,48 @@ function carveOwnAppointment(dateStr, busy) {
   return subtractInterval(busy, s, s + (editingAppointment.duration_min || 0));
 }
 
+// Draws at once from whatever is already known, then repaints as the rest
+// arrives — instead of an empty box until every day has been checked:
+//   1. Admin hours for the month not loaded yet → Fridays (the default work
+//      day) shimmer as "checking", everything else is drawn final.
+//   2. Hours known, busy times missing → the month's work days shimmer; busy
+//      times older than the TTL are shown as they are for now (see the
+//      freshness rules above getBusySlots).
+//   3. Fresh busy times in → final paint.
+// A shimmering day can't be clicked, so she can only pick a day whose
+// available/full state is known. `calRenderSeq` drops a slow answer that
+// belongs to a month she has already navigated away from.
+let calRenderSeq = 0;
 async function renderCalendar() {
+  const seq   = ++calRenderSeq;
+  const year  = calYear, month = calMonth;
+  const known = availabilityCache.get(`${year}-${month}`);
+
+  let candidates = paintCalendar(year, month, known || null, false);
+  let byDate = known;
+  if (!byDate) {
+    byDate = await getMonthAvailability(year, month);
+    if (seq !== calRenderSeq) return;
+    candidates = paintCalendar(year, month, byDate, false);
+  }
+  if (candidates.every(isBusyFresh)) return;
+
+  await refreshBookingWindow();
+  if (seq !== calRenderSeq) return;
+  paintCalendar(year, month, byDate, true);
+}
+
+// One synchronous paint of the month grid. `byDate` null = admin hours not
+// loaded yet. `final` = no more data is coming, so a day still without a busy
+// read (backend unreachable) counts as free, as it always did.
+// Returns the month's candidate dates (bookable if they still have room).
+function paintCalendar(year, month, byDate, final) {
   const box    = document.getElementById('calendar-box');
   const today  = new Date();
   today.setHours(0, 0, 0, 0);
 
-  const byDate = await getMonthAvailability(calYear, calMonth);
-
-  const firstDay = new Date(calYear, calMonth, 1);
-  const lastDay  = new Date(calYear, calMonth + 1, 0);
+  const firstDay = new Date(year, month, 1);
+  const lastDay  = new Date(year, month + 1, 0);
   const daysInMonth = lastDay.getDate();
   const startDow    = firstDay.getDay(); // 0=Sun
 
@@ -1070,15 +1204,15 @@ async function renderCalendar() {
   // and no navigating back before the current one.
   const horizon    = MoriyaBooking.horizonDate();
   const horizonStr = MoriyaBooking.toDateStr(horizon);
-  const atLast  = calYear > horizon.getFullYear() ||
-                  (calYear === horizon.getFullYear() && calMonth >= horizon.getMonth());
-  const atFirst = calYear < today.getFullYear() ||
-                  (calYear === today.getFullYear() && calMonth <= today.getMonth());
+  const atLast  = year > horizon.getFullYear() ||
+                  (year === horizon.getFullYear() && month >= horizon.getMonth());
+  const atFirst = year < today.getFullYear() ||
+                  (year === today.getFullYear() && month <= today.getMonth());
 
   let html = `
     <div class="cal-header">
       <button class="cal-nav" id="cal-prev" ${atFirst ? 'disabled' : ''}>›</button>
-      <h4>${HE_MONTHS[calMonth]} ${calYear}</h4>
+      <h4>${HE_MONTHS[month]} ${year}</h4>
       <button class="cal-nav" id="cal-next" ${atLast ? 'disabled' : ''}>‹</button>
     </div>
     <div class="cal-grid">
@@ -1090,42 +1224,44 @@ async function renderCalendar() {
     html += '<div class="cal-day empty"></div>';
   }
 
-  // First pass: classify each day. A "candidate" has effective open windows
-  // (Fridays by default, any day the admin opened, unless closed) and falls
-  // inside the rolling booking window.
-  const dayMeta = [];
+  // A "candidate" has effective open windows (Fridays by default, any day the
+  // admin opened, unless closed) and falls inside the rolling booking window.
+  // Days whose free slots are all taken render as full — the client can only
+  // book a date that still has room for her selected treatment.
+  const candidates = [];
+  let anyLoading = false;
   for (let day = 1; day <= daysInMonth; day++) {
-    const d        = new Date(calYear, calMonth, day);
+    const d        = new Date(year, month, day);
     const isPast   = d < today;
-    const dateStr  = `${calYear}-${padNum(calMonth+1)}-${padNum(day)}`;
+    const dateStr  = `${year}-${padNum(month+1)}-${padNum(day)}`;
     const isBeyond = dateStr > horizonStr;
-    const hasWindows = effectiveOpenWindows(dateStr, byDate.get(dateStr)).length > 0;
-    dayMeta.push({ day, dateStr, isPast, isBeyond, candidate: !isPast && !isBeyond && hasWindows });
-  }
+    const inWindow = !isPast && !isBeyond;
+    const wins     = byDate ? (byDate.get(dateStr) || {}) : null;
+    const candidate = inWindow && (wins
+      ? effectiveOpenWindows(dateStr, wins).length > 0
+      : isFridayStr(dateStr));                 // hours not loaded yet: guess the default
+    if (candidate && wins) candidates.push(dateStr);
 
-  // Second pass: for candidate days, check the calendar so days whose free
-  // slots are all taken render (and behave) like non-working days – the client
-  // can only pick a date that still has room for her selected treatment.
-  const fullDates = new Set();
-  await Promise.all(dayMeta.filter(m => m.candidate).map(async m => {
-    const wins    = await getDayWindows(m.dateStr);
-    const busy    = carveOwnAppointment(m.dateStr, await getBusySlots(m.dateStr));
-    const hasFree = buildAvailableSlots(state.totalTime, busy, m.dateStr, wins).some(s => !s.busy);
-    if (!hasFree) fullDates.add(m.dateStr);
-  }));
+    const cached  = busySlotsCache.get(dateStr);
+    const loading = candidate && (!wins || (!cached && !final));
+    let bookable = false;
+    if (candidate && !loading) {
+      const busy = carveOwnAppointment(dateStr, cached ? cached.busy : []);
+      bookable = buildAvailableSlots(state.totalTime, busy, dateStr, wins).some(s => !s.busy);
+    }
 
-  for (const meta of dayMeta) {
-    const { day, dateStr, isPast, isBeyond, candidate } = meta;
     const isSelected = state.selectedDate === dateStr;
-    const bookable   = candidate && !fullDates.has(dateStr);
-
     // A full Friday (candidate, but every slot is taken) stays clickable —
     // unlike a genuinely non-working day — so she can still reach it and join
     // the waitlist via loadTimeSlots()'s empty-state CTA, instead of a full
     // day looking and behaving exactly like a Tuesday.
-    const isFull = candidate && !bookable;
+    const isFull = candidate && !loading && !bookable;
     let cls = 'cal-day';
-    if (bookable) {
+    if (loading) {
+      cls += ' loading';
+      if (isSelected) cls += ' selected';
+      anyLoading = true;
+    } else if (bookable) {
       cls += ' friday-avail';
       if (isSelected) cls += ' selected';
     } else if (isFull) {
@@ -1139,6 +1275,7 @@ async function renderCalendar() {
     let title = '';
     if (isBeyond) title = ' title="ניתן לקבוע תורים עד חודשיים מראש"';
     else if (isFull) title = ' title="אין שעות פנויות ביום זה — אפשר להצטרף לרשימת המתנה"';
+    else if (loading) title = ' title="בודקת שעות פנויות…"';
     html += `<div class="${cls}" ${dataAttr}${title}>${day}</div>`;
   }
 
@@ -1150,6 +1287,7 @@ async function renderCalendar() {
     html += `<p class="cal-horizon-note">🗓️ ניתן לקבוע תור עד ${hD}/${hM}/${hY} · מועדים רחוקים יותר ייפתחו בהמשך 💕</p>`;
   }
   box.innerHTML = html;
+  box.setAttribute('aria-busy', anyLoading ? 'true' : 'false');
 
   document.getElementById('cal-prev')?.addEventListener('click', () => {
     calMonth--;
@@ -1172,28 +1310,14 @@ async function renderCalendar() {
       loadTimeSlots(state.selectedDate);
     });
   });
+
+  return candidates;
 }
 
-async function loadTimeSlots(dateStr) {
-  const slotsBox  = document.getElementById('slots-box');
-  const slotsGrid = document.getElementById('slots-grid');
-  const dateLabel = document.getElementById('selected-date-label');
-
-  // Format date for display
-  const [y, m, d] = dateStr.split('-');
-  dateLabel.textContent = `${d}/${m}/${y}`;
-
-  slotsBox.style.display = 'block';
-  slotsGrid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות פנויות…</span></div>';
-
-  // renderCalendar() already fetched (and cached) this date's busy slots while
-  // checking which days in the month still have room, so reuse that instead of
-  // hitting the calendar backend a second time right when the client is waiting.
-  let busySlots = await getBusySlots(dateStr);
-
-  // A logged-in client may book more than one appointment per day. If she
-  // already has one on this date, show a friendly note (but still allow it) and
-  // treat those appointments as busy so she can't overlap a slot she holds.
+// A logged-in client may book more than one appointment per day. If she
+// already has one on this date, show a friendly note (but still allow it) and
+// treat those appointments as busy so she can't overlap a slot she holds.
+async function loadOwnSameDay(dateStr) {
   let sameDayNote = '';
   let ownBusy = [];
   if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
@@ -1216,10 +1340,36 @@ async function loadTimeSlots(dateStr) {
       });
     } catch (e) { /* on error, just skip the note */ }
   }
+  return { sameDayNote, ownBusy };
+}
+
+let slotsRenderSeq = 0;
+async function loadTimeSlots(dateStr) {
+  const slotsBox  = document.getElementById('slots-box');
+  const slotsGrid = document.getElementById('slots-grid');
+  const dateLabel = document.getElementById('selected-date-label');
+
+  // Format date for display
+  const [y, m, d] = dateStr.split('-');
+  dateLabel.textContent = `${d}/${m}/${y}`;
+
+  slotsBox.style.display = 'block';
+  slotsGrid.innerHTML = '<div class="slots-loading"><div class="spinner"></div><span>טוענת שעות פנויות…</span></div>';
+
+  // The day's busy times (usually already loaded with the calendar), her own
+  // bookings that day and the day's hours don't depend on each other — fetch
+  // them side by side rather than one after another.
+  const seq = ++slotsRenderSeq;
+  const [busyRead, own, dayWindows] = await Promise.all([
+    getBusySlots(dateStr),
+    loadOwnSameDay(dateStr),
+    getDayWindows(dateStr)
+  ]);
+  if (seq !== slotsRenderSeq) return;   // she has picked another day meanwhile
+  const { sameDayNote, ownBusy } = own;
   renderSameDayNote(sameDayNote);
 
-  busySlots = carveOwnAppointment(dateStr, busySlots).concat(ownBusy);
-  const dayWindows = await getDayWindows(dateStr);
+  const busySlots = carveOwnAppointment(dateStr, busyRead).concat(ownBusy);
   const slots = buildAvailableSlots(state.totalTime, busySlots, dateStr, dayWindows);
   renderSlots(slots, slotsGrid, dateStr);
 }
@@ -1302,20 +1452,29 @@ async function findNearestSlot() {
   // Clients may hold more than one appointment per day, so days they already
   // booked are still eligible — their own bookings just count as busy (so the
   // nearest slot never overlaps one they hold).
-  const ownByDate = new Map();
-  if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
-    try {
-      const { data } = await MoriyaAuth.sb.from('appointments')
-        .select('date, start_time, duration_min')
-        .eq('user_id', MoriyaAuth.user.id).neq('status', 'cancelled');
-      (data || []).forEach(a => {
-        const s = hhmmToMin(a.start_time);
-        const arr = ownByDate.get(a.date) || [];
-        arr.push({ start: s, end: s + (a.duration_min || 0) });
-        ownByDate.set(a.date, arr);
-      });
-    } catch (e) { /* ignore */ }
-  }
+  const loadOwn = async () => {
+    const ownByDate = new Map();
+    if (window.MoriyaAuth && MoriyaAuth.isLoggedIn()) {
+      try {
+        const { data } = await MoriyaAuth.sb.from('appointments')
+          .select('date, start_time, duration_min')
+          .eq('user_id', MoriyaAuth.user.id).neq('status', 'cancelled');
+        (data || []).forEach(a => {
+          const s = hhmmToMin(a.start_time);
+          const arr = ownByDate.get(a.date) || [];
+          arr.push({ start: s, end: s + (a.duration_min || 0) });
+          ownByDate.set(a.date, arr);
+        });
+      } catch (e) { /* ignore */ }
+    }
+    return ownByDate;
+  };
+
+  // Everything the scan needs, fetched up front and side by side: her own
+  // bookings, the admin hours of every month in the window, and the window's
+  // busy times in a single request. The day-by-day loop below then reads from
+  // cache instead of waiting on the backend once per Friday.
+  const [ownByDate] = await Promise.all([loadOwn(), loadWindowAvailability(), refreshBookingWindow()]);
 
   const d = new Date(today);
   const horizon = MoriyaBooking.horizonDate();
@@ -1638,7 +1797,7 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
     if (apptErr) throw new Error(apptErr.message);
     // The slot she just took is now busy — drop the cached read so anyone
     // (including her, booking a second appointment) sees it as taken.
-    busySlotsCache.delete(state.selectedDate);
+    invalidateBusy(state.selectedDate);
   } catch (err) {
     console.warn('Supabase save failed:', err.message);
     saveFailed = true;
@@ -1678,6 +1837,8 @@ document.getElementById('booking-form')?.addEventListener('submit', async e => {
   }
 
   showSuccess(name, phone, notes, isUrgent);
+  // Returning clients without a review get an invitation on the success screen.
+  window.MoriyaReviews?.offerAfterBooking();
 });
 
 // Format a 'YYYY-MM-DD' date as a friendly Hebrew string, e.g. "יום שישי, 27 ביוני 2026".
@@ -1700,6 +1861,9 @@ function renderSuccessCard({ heading, subtitle, treatments, duration, durationMi
   if (iconEl)     iconEl.textContent     = isPending ? '⏳' : '🎉';
   if (headingEl)  headingEl.textContent  = heading;
   if (subtitleEl) subtitleEl.textContent = subtitle;
+  // Only a new booking offers the review card (see the booking submit handler).
+  const reviewCta = document.getElementById('success-review-cta');
+  if (reviewCta) reviewCta.style.display = 'none';
 
   document.getElementById('sc-date').textContent     = formatHebrewDate(state.selectedDate);
   document.getElementById('sc-time').textContent     = state.selectedTime;
@@ -1987,7 +2151,7 @@ async function cancelAppointment(id, appts) {
     // 2) Mark the appointment cancelled in Supabase.
     await MoriyaAuth.sb.from('appointments').update({ status: 'cancelled' }).eq('id', id);
     // The freed slot should show as available again on the next calendar view.
-    if (appt) busySlotsCache.delete(appt.date);
+    if (appt) invalidateBusy(appt.date);
     // Someone may be waiting for this exact date — best-effort, never blocks.
     fetch(`${API_BASE}/api/waitlist-notify`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -2397,8 +2561,8 @@ async function updateAppointment() {
       status:       needsApproval ? 'pending_approval' : 'booked'
     }).eq('id', editingAppointment.id);
     // Both the old date (now freed) and the new one (now taken) need a fresh read.
-    busySlotsCache.delete(editingAppointment.date);
-    busySlotsCache.delete(state.selectedDate);
+    invalidateBusy(editingAppointment.date);
+    invalidateBusy(state.selectedDate);
     // The old date may have opened a slot someone's waiting for — best-effort.
     fetch(`${API_BASE}/api/waitlist-notify`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
