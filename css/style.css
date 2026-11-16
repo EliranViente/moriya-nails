@@ -767,7 +767,7 @@ ul { list-style: none; }
   align-items: flex-end;
   gap: 2px;
 }
-.t-time { font-size: 0.82rem; color: var(--gray-400); }
+.t-time { font-size: 0.82rem; color: var(--gray-600); }
 .t-price { font-size: 1.1rem; font-weight: 700; color: var(--pink-500); }
 
 /* Add-ons title */
@@ -847,7 +847,7 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   gap: 2px;
 }
 .a-name { font-weight: 600; font-size: 0.95rem; color: var(--gray-800); }
-.a-desc { font-size: 0.8rem; color: var(--gray-400); }
+.a-desc { font-size: 0.8rem; color: var(--gray-600); }
 
 .addon-nums {
   display: flex;
@@ -855,7 +855,7 @@ input[type="checkbox"]:checked + .custom-check::after { opacity: 1; }
   align-items: flex-end;
   gap: 2px;
 }
-.a-time { font-size: 0.8rem; color: var(--gray-400); }
+.a-time { font-size: 0.8rem; color: var(--gray-600); }
 .a-price { font-size: 0.95rem; font-weight: 700; color: var(--pink-500); }
 
 /* Treatment emojis (carried over from the old price list) */
@@ -2810,10 +2810,26 @@ textarea:focus-visible,
 /* ═══════════════════════════════════════════
    BASE TOGGLE + NEAREST-SLOT BUTTON
 ═══════════════════════════════════════════ */
-.base-treatment-row.unchecked {
-  opacity: 0.55;
-  filter: grayscale(0.35);
+/* An unselected option stays fully readable (black text) – only the card's
+   background and border tell what is chosen. */
+.base-treatment-row {
+  position: relative;
+  cursor: pointer;
+  transition: background var(--transition), border-color var(--transition), box-shadow var(--transition);
 }
+.base-treatment-row.unchecked {
+  background: var(--white);
+  border-color: var(--pink-100);
+  box-shadow: none;
+}
+.base-treatment-row.unchecked:hover { border-color: var(--pink-300); }
+.base-treatment-row:not(.unchecked) {
+  border: 2px solid var(--pink-500);
+  box-shadow: 0 4px 14px rgba(232, 88, 128, 0.2);
+}
+/* The two manicure bases are a single choice: no checkbox (it reads as "pick
+   several"); the whole card is the button and its pink border marks the chosen one. */
+#step-1 .base-treatment-row .custom-check { display: none; }
 /* An option that needs another treatment first: shown, but not selectable.
    Must come after .unchecked – a locked row carries both classes, and these
    two rules have equal specificity, so source order decides. */
